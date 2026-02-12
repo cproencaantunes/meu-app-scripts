@@ -8,130 +8,131 @@ import time
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
-# --- 1. RECUPERAÇÃO DE CONFIGURAÇÕES DA SESSÃO ---
-user_api_key = st.session_state.get('user_api_key')
-sheet_url = st.session_state.get('sheet_url')
+# --- 1. CONFIGURAÇÕES E AUTENTICAÇÃO ---
+st.set_page_config(page_title="Processador CUF", layout="wide")
 
-st.set_page_config(page_title="Lista de Honorários", page_icon="💰", layout="wide")
-
-# Bloqueio de segurança
-if not user_api_key or not sheet_url:
-    st.warning("⚠️ Configuração em falta! Por favor, vá à página **Home (🏠)** e insira a sua API Key e o link da Planilha.")
-    st.stop()
-
-st.title("💰 Extração de Lista de Honorários")
-st.markdown("---")
-
-# --- 2. FUNÇÕES TÉCNICAS REFINADAS ---
-
-def extrair_id_planilha(url):
-    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
-    return match.group(1) if match else url
-
-def corrigir_texto_invertido(texto):
-    """Detecta e inverte linhas que o leitor de PDF baralhou (comum em PDFs da CUF)."""
-    linhas = texto.split('\n')
-    texto_corrigido = []
-    for linha in linhas:
-        # Se detetar termos chave invertidos
-        if "SOLRAC" in linha or "SENUTNA" in linha or "SEÕÇNETER" in linha:
-            texto_corrigido.append(linha[::-1])
-        else:
-            texto_corrigido.append(linha)
-    return "\n".join(texto_corrigido)
-
-def extrair_dados_ia(texto_pagina, model):
-    texto_limpo = corrigir_texto_invertido(texto_pagina)
-    
-    prompt = """
-    Analise este relatório de honorários médico.
-    REGRAS CRÍTICAS:
-    1. IGNORE o cabeçalho onde aparece o nome do médico (ex: C PROENÇA ANTUNES).
-    2. Ignore linhas de totais ou sumários.
-    3. Extraia apenas as linhas de atos médicos/doentes.
-    4. Formato JSON estrito: [{"data":"DD-MM-YYYY","id":"ID_EPISODIO","nome":"NOME_DOENTE","valor":0.00}]
-    5. Se o nome do doente parecer invertido, corrija-o.
-    """
-    
-    try:
-        response = model.generate_content(f"{prompt}\n\nTEXTO:\n{texto_limpo}")
-        match = re.search(r'\[\s*\{.*\}\s*\]', response.text, re.DOTALL)
-        if not match: return []
-        
-        dados = json.loads(match.group())
-        
-        # Filtro de Segurança adicional via Código
-        dados_filtrados = [
-            d for d in dados 
-            if "PROENÇA" not in str(d.get('nome')).upper() 
-            and "ANTUNES" not in str(d.get('nome')).upper()
-            and len(str(d.get('id'))) > 4 # IDs de episódios são geralmente longos
-        ]
-        return dados_filtrados
-    except Exception:
-        return []
-
-# --- 3. PROCESSO DE EXECUÇÃO ---
-
+# Recuperar segredos do Streamlit
 try:
-    # Configurar IA
-    genai.configure(api_key=user_api_key)
-    model = genai.GenerativeModel("models/gemini-2.0-flash")
-    
-    # Configurar Google Sheets
+    # Google Sheets
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds_dict = st.secrets["gcp_service_account"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     gc = gspread.authorize(creds)
     
-    sh = gc.open_by_key(extrair_id_planilha(sheet_url))
-    worksheet = sh.get_worksheet(0)
+    # Gemini
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=API_KEY)
 except Exception as e:
-    st.error(f"❌ Erro na ligação às APIs: {e}")
+    st.error("❌ Erro nas chaves de segurança. Verifique os Secrets no Streamlit Cloud.")
     st.stop()
 
-# Interface de Upload
-arquivos_pdf = st.file_uploader("Upload de PDFs de Honorários", type=['pdf'], accept_multiple_files=True)
+# Configurações da Planilha (Podes manter fixo ou usar st.session_state)
+SPREADSHEET_ID = '1WMd12Ps24yJkOTCXfi3tIFJ2UqvI7u_NWQsdgoX82wQ'
+NOME_FOLHA = 'pagos'
 
-if arquivos_pdf and st.button("🚀 Processar e Gravar"):
-    todas_as_linhas = []
-    data_execucao = datetime.now().strftime("%d-%m-%Y %H:%M")
-    
-    progresso = st.progress(0)
-    status_text = st.empty()
-    
-    for i, pdf_file in enumerate(arquivos_pdf):
-        status_text.text(f"A ler ficheiro {i+1} de {len(arquivos_pdf)}: {pdf_file.name}")
-        
-        with pdfplumber.open(pdf_file) as pdf:
-            for pagina in pdf.pages:
-                # layout=True é essencial para manter a estrutura visual
-                texto = pagina.extract_text(layout=True)
-                if texto:
-                    dados = extrair_dados_ia(texto, model)
-                    for d in dados:
-                        todas_as_linhas.append([
-                            d.get('data'), 
-                            d.get('id'), 
-                            str(d.get('nome')).upper(), 
-                            d.get('valor'), 
-                            data_execucao, 
-                            pdf_file.name
-                        ])
-        
-        progresso.progress((i + 1) / len(arquivos_pdf))
-        time.sleep(1) # Rate limiting para o Gemini
+# --- 2. FUNÇÕES DE SUPORTE ---
 
-    # Gravação dos Resultados
-    if todas_as_linhas:
-        try:
-            worksheet.append_rows(todas_as_linhas)
-            st.balloons()
-            st.success(f"✅ Sucesso! {len(todas_as_linhas)} linhas adicionadas à planilha.")
+def formatar_data(data_str):
+    data_str = str(data_str).strip()
+    if not data_str or "DD-MM-YYYY" in data_str.upper():
+        return None
+    
+    # Regex para capturar DD-MM-YY ou DD-MM-YYYY
+    match = re.search(r'(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})', data_str)
+    if match:
+        d, m, a = match.groups()
+        if len(a) == 2:
+            a = "20" + a
+        return f"{d.zfill(2)}-{m.zfill(2)}-{a}"
+    return None
+
+def extrair_dados_ia(texto_pagina, model):
+    prompt = "Extraia dados deste PDF CUF para este JSON: [{\"data\":\"DD-MM-YYYY\",\"id\":\"ID\",\"nome\":\"NOME\",\"valor\":0.00}]"
+    try:
+        response = model.generate_content(f"{prompt}\n\nTEXTO:\n{texto_pagina}", generation_config={"temperature": 0.0})
+        match = re.search(r'\[\s*\{.*\}\s*\]', response.text, re.DOTALL)
+        return json.loads(match.group()) if match else []
+    except:
+        return []
+
+# --- 3. INTERFACE STREAMLIT ---
+
+st.title("🏥 Processador de PDFs CUF")
+st.write("Carregue os seus relatórios para extração automática para o Google Sheets.")
+
+# Upload de ficheiros
+arquivos_pdf = st.file_uploader("Selecione os ficheiros PDF", type=['pdf'], accept_multiple_files=True)
+
+if arquivos_pdf:
+    if st.button("🚀 Iniciar Processamento"):
+        model = genai.GenerativeModel("models/gemini-2.0-flash")
+        todas_as_linhas_final = []
+        data_hoje = datetime.now().strftime("%d-%m-%Y %H:%M")
+        
+        # Termos para ignorar (limpeza do cabeçalho)
+        termos_ignorar = ["PROENÇA ANTUNES", "UTILIZADOR", "PÁGINA", "LISTAGEM", "RELATÓRIO", "FIM DA LISTAGEM"]
+
+        barra_progresso = st.progress(0)
+        status_text = st.empty()
+
+        for idx, pdf_file in enumerate(arquivos_pdf):
+            status_text.text(f"📖 A analisar: {pdf_file.name}")
+            ultima_data_valida = ""
+
+            with pdfplumber.open(pdf_file) as pdf:
+                for pagina in pdf.pages:
+                    # layout=True ajuda a manter a estrutura para a IA
+                    texto = pagina.extract_text(layout=True)
+                    if not texto: continue
+
+                    dados_ia = extrair_dados_ia(texto, model)
+
+                    for d in dados_ia:
+                        # 1. Lógica de Data
+                        dt_extraida = formatar_data(d.get('data', ''))
+                        if dt_extraida:
+                            ultima_data_valida = dt_extraida
+                        else:
+                            dt_extraida = ultima_data_valida
+
+                        # 2. Limpeza do ID e Nome
+                        id_raw = str(d.get('id', '')).strip()
+                        id_limpo = re.sub(r'\D', '', id_raw)
+                        nome_raw = str(d.get('nome', '')).replace('\n', ' ').strip().upper()
+
+                        # 3. Filtros
+                        e_lixo = any(termo in nome_raw for termo in termos_ignorar)
+
+                        if id_limpo and not e_lixo and len(nome_raw) > 3:
+                            todas_as_linhas_final.append([
+                                dt_extraida,
+                                id_limpo,
+                                nome_raw,
+                                d.get('valor', 0.0),
+                                data_hoje,
+                                pdf_file.name
+                            ])
             
-            with st.expander("Ver dados extraídos"):
-                st.table(todas_as_linhas)
-        except Exception as e:
-            st.error(f"Erro ao escrever no Google Sheets: {e}")
-    else:
-        st.warning("Não foram encontrados dados de doentes válidos nestes ficheiros.")
+            barra_progresso.progress((idx + 1) / len(arquivos_pdf))
+            time.sleep(1)
+
+        # --- 4. GRAVAÇÃO NO GOOGLE SHEETS ---
+        if todas_as_linhas_final:
+            try:
+                sh = gc.open_by_key(SPREADSHEET_ID)
+                try:
+                    worksheet = sh.worksheet(NOME_FOLHA)
+                except:
+                    worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="2000", cols="6")
+
+                # Adiciona cabeçalho se estiver vazio
+                if not worksheet.get_all_values():
+                    worksheet.append_row(["Data", "ID", "Nome", "Valor", "Data Execução", "Ficheiro Origem"])
+
+                worksheet.append_rows(todas_as_linhas_final)
+                st.balloons()
+                st.success(f"✅ CONCLUÍDO: {len(todas_as_linhas_final)} linhas escritas em '{NOME_FOLHA}'.")
+                st.dataframe(todas_as_linhas_final)
+            except Exception as e:
+                st.error(f"Erro ao aceder à planilha: {e}")
+        else:
+            st.warning("❌ Nenhum dado válido encontrado nos PDFs.")
