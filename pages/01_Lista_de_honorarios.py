@@ -19,7 +19,7 @@ if not user_api_key or not sheet_url:
     st.warning("⚠️ Configuração em falta! Por favor, vá à página **Home (🏠)** e insira a sua API Key e o link da Planilha.")
     st.stop()
 
-# --- 2. FUNÇÕES DE SUPORTE (Lógica do Colab Refinada) ---
+# --- 2. FUNÇÕES DE SUPORTE ---
 
 def extrair_id_planilha(url):
     match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
@@ -31,7 +31,6 @@ def formatar_data(data_str):
     if not data_str or "DD-MM-YYYY" in data_str.upper():
         return None
     
-    # Procura padrão de data (DD-MM-YY ou DD-MM-YYYY)
     match = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})', data_str)
     if match:
         d, m, a = match.groups()
@@ -41,7 +40,6 @@ def formatar_data(data_str):
     return None
 
 def extrair_dados_ia(texto_pagina, model):
-    """Prompt otimizado para extração estrita."""
     prompt = "Extraia dados deste PDF CUF para este JSON: [{\"data\":\"DD-MM-YYYY\",\"id\":\"ID\",\"nome\":\"NOME\",\"valor\":0.00}]"
     try:
         response = model.generate_content(
@@ -64,7 +62,7 @@ try:
     gc = gspread.authorize(creds)
     
     sh = gc.open_by_key(extrair_id_planilha(sheet_url))
-    worksheet = sh.get_worksheet(0) # Assume a primeira aba
+    worksheet = sh.get_worksheet(0)
 except Exception as e:
     st.error(f"❌ Erro de Conexão: {e}")
     st.stop()
@@ -72,7 +70,7 @@ except Exception as e:
 # --- 4. INTERFACE E PROCESSAMENTO ---
 
 st.title("💰 Processador de Honorários")
-st.markdown("Extração automática com salto de cabeçalhos e correção de datas.")
+st.markdown("Extração automática ignorando cabeçalhos da primeira página.")
 
 arquivos_pdf = st.file_uploader("Carregue os PDFs de Honorários", type=['pdf'], accept_multiple_files=True)
 
@@ -82,7 +80,7 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
     termos_ignorar = ["PROENÇA ANTUNES", "UTILIZADOR", "PÁGINA", "LISTAGEM", "RELATÓRIO", "FIM DA LISTAGEM"]
 
     progresso = st.progress(0)
-    status_info = st.empty()
+    status_info = st.empty() # Criado aqui dentro do botão
 
     for idx, pdf_file in enumerate(arquivos_pdf):
         status_info.info(f"Analisando: `{pdf_file.name}`")
@@ -91,7 +89,7 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
         with pdfplumber.open(pdf_file) as pdf:
             for i, pagina in enumerate(pdf.pages):
                 
-                # --- REGRA: SALTAR A PRIMEIRA PÁGINA (CABEÇALHO) ---
+                # --- REGRA: SALTAR A PRIMEIRA PÁGINA ---
                 if i == 0:
                     continue 
 
@@ -101,21 +99,16 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
                 dados_ia = extrair_dados_ia(texto, model)
 
                 for d in dados_ia:
-                    # 1. Lógica de Data (Herança de linha)
                     dt_extraida = formatar_data(d.get('data', ''))
                     if dt_extraida:
                         ultima_data_valida = dt_extraida
                     else:
                         dt_extraida = ultima_data_valida
 
-                    # 2. Limpeza do ID (Apenas números)
                     id_raw = str(d.get('id', '')).strip()
                     id_limpo = re.sub(r'\D', '', id_raw)
-
-                    # 3. Limpeza do Nome
                     nome_raw = str(d.get('nome', '')).replace('\n', ' ').strip().upper()
 
-                    # 4. Filtro de Validação
                     e_lixo = any(termo in nome_raw for termo in termos_ignorar)
 
                     if id_limpo and not e_lixo and len(nome_raw) > 3:
@@ -129,18 +122,19 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
                         ])
         
         progresso.progress((idx + 1) / len(arquivos_pdf))
-        time.sleep(1) # Rate limit para API gratuita
+        time.sleep(1)
+
+    # Limpa o texto de status após terminar
+    status_info.empty()
 
     # --- 5. GRAVAÇÃO FINAL ---
     if todas_as_linhas_final:
         try:
             worksheet.append_rows(todas_as_linhas_final)
             st.balloons()
-            st.success(f"✅ Concluído! {len(todas_as_linhas_final)} linhas escritas na planilha.")
+            st.success(f"✅ Concluído! {len(todas_as_linhas_final)} linhas escritas.")
             st.dataframe(todas_as_linhas_final)
         except Exception as e:
             st.error(f"Erro ao gravar na planilha: {e}")
     else:
-        st.warning("Nenhum dado válido encontrado nos PDFs (além das páginas de cabeçalho).")
-
-status_info.empty()
+        st.warning("Nenhum dado válido encontrado (além da página de cabeçalho).")
