@@ -8,121 +8,119 @@ import time
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
-# --- 1. CONFIGURAÇÕES E AUTENTICAÇÃO ---
-st.set_page_config(page_title="Analisador CUF", page_icon="📄")
-st.title("📄 Processador de Honorários (Versão Colab)")
+# --- 1. RECUPERAÇÃO DE CONFIGURAÇÕES DA SESSÃO ---
+user_api_key = st.session_state.get('user_api_key')
+sheet_url = st.session_state.get('sheet_url')
 
-try:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=API_KEY)
+st.set_page_config(page_title="Lista de Honorários", page_icon="💰")
+
+# Bloqueio de segurança: Se não houver chaves, não corre
+if not user_api_key or not sheet_url:
+    st.warning("⚠️ Configuração em falta! Por favor, vá à página **Home (🏠)** e insira a sua API Key e o link da Planilha.")
+    st.stop()
+
+st.title("💰 Processamento de Lista de Honorários")
+st.info("Esta ferramenta extrai Data, ID (Episódio), Nome do Paciente e Valor dos honorários.")
+
+# --- 2. FUNÇÕES TÉCNICAS ---
+
+def extrair_id_planilha(url):
+    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
+    return match.group(1) if match else url
+
+def corrigir_texto_invertido(texto):
+    """Corrige o erro de leitura reversa (ex: SOLRAC -> CARLOS)"""
+    linhas = texto.split('\n')
+    texto_corrigido = []
+    for linha in linhas:
+        # Detetores comuns de inversão no PDF da CUF
+        if "SOLRAC" in linha or "SENUTNA" in linha or "SEÕÇNETER" in linha:
+            texto_corrigido.append(linha[::-1])
+        else:
+            texto_corrigido.append(linha)
+    return "\n".join(texto_corrigido)
+
+def extrair_dados_ia(texto_pagina, model):
+    """Envia o texto para o Gemini e extrai o JSON estruturado"""
+    texto_limpo = corrigir_texto_invertido(texto_pagina)
     
+    prompt = """
+    Analise este texto de um relatório de honorários médico CUF.
+    Extraia todas as transações individuais para este formato JSON:
+    [{"data":"DD-MM-YYYY","id":"ID_NUMERICO","nome":"NOME_COMPLETO","valor":0.00}]
+    
+    Regras:
+    1. A data deve ser DD-MM-YYYY.
+    2. O ID deve conter apenas números.
+    3. O nome deve ser limpo de ruído e corrigido se estiver invertido.
+    4. Retorne APENAS o JSON, sem explicações.
+    """
+    try:
+        response = model.generate_content(f"{prompt}\n\nTEXTO:\n{texto_limpo}")
+        # Encontra o JSON dentro da resposta da IA
+        match = re.search(r'\[\s*\{.*\}\s*\]', response.text, re.DOTALL)
+        return json.loads(match.group()) if match else []
+    except Exception:
+        return []
+
+# --- 3. EXECUÇÃO ---
+
+# Configuração da IA e Google Sheets
+try:
+    genai.configure(api_key=user_api_key)
+    model = genai.GenerativeModel("models/gemini-2.0-flash")
+    
+    # Autenticação Google Sheets via Service Account (Robô do App)
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     gc = gspread.authorize(creds)
+    
+    sheet_id = extrair_id_planilha(sheet_url)
+    sh = gc.open_by_key(sheet_id)
+    worksheet = sh.get_worksheet(0) # Usa a primeira aba
 except Exception as e:
-    st.error(f"❌ Erro de Configuração: {e}")
+    st.error(f"❌ Erro de Autenticação: {e}")
     st.stop()
 
-SPREADSHEET_ID = '1WMd12Ps24yJkOTCXfi3tIFJ2UqvI7u_NWQsdgoX82wQ'
-NOME_FOLHA = 'pagos'
+# Upload de Ficheiros
+arquivos_pdf = st.file_uploader("Arraste os PDFs de Honorários aqui", type=['pdf'], accept_multiple_files=True)
 
-# --- 2. FUNÇÕES DE SUPORTE (ORIGINAIS DO COLAB) ---
-
-def formatar_data(data_str):
-    data_str = str(data_str).strip()
-    if not data_str or "DD-MM-YYYY" in data_str.upper():
-        return None
-    match_iso = re.search(r'(\d{4})-(\d{2})-(\d{2})', data_str)
-    if match_iso:
-        return f"{match_iso.group(3)}-{match_iso.group(2)}-{match_iso.group(1)}"
-    match_pt = re.search(r'\d{2}-\d{2}-\d{4}', data_str)
-    return match_pt.group(0) if match_pt else None
-
-def extrair_dados_ia(texto_pagina, model):
-    # Prompt idêntico ao original do Colab
-    prompt = "Extraia dados deste PDF CUF para este JSON: [{\"data\":\"DD-MM-YYYY\",\"id\":\"ID\",\"nome\":\"NOME\",\"valor\":0.00}]"
-    try:
-        response = model.generate_content(f"{prompt}\n\nTEXTO:\n{texto_pagina}")
-        match = re.search(r'\[\s*\{.*\}\s*\]', response.text, re.DOTALL)
-        return json.loads(match.group()) if match else []
-    except:
-        return []
-
-# --- 3. INTERFACE E FLUXO DE PROCESSAMENTO ---
-
-arquivos_pdf = st.file_uploader("Arraste os PDFs aqui", type=['pdf'], accept_multiple_files=True)
-
-if arquivos_pdf and st.button("Iniciar Processamento"):
-    model = genai.GenerativeModel("models/gemini-2.0-flash")
-    todas_as_linhas_final = []
-    data_hoje = datetime.now().strftime("%d-%m-%Y")
-
-    # Termos originais do Colab
-    termos_ignorar = ["PROENÇA ANTUNES", "UTILIZADOR", "PÁGINA", "LISTAGEM", "RELATÓRIO", "FIM DA LISTAGEM"]
-
-    progresso = st.progress(0)
+if arquivos_pdf and st.button("🚀 Iniciar Extração"):
+    todas_as_linhas = []
+    data_proc = datetime.now().strftime("%d-%m-%Y %H:%M")
     
-    for idx, pdf_file in enumerate(arquivos_pdf):
-        st.write(f"📖 A analisar: {pdf_file.name}")
-        ultima_data_valida = ""
-
+    progresso = st.progress(0)
+    for i, pdf_file in enumerate(arquivos_pdf):
+        st.write(f"Analisando: `{pdf_file.name}`...")
+        
         with pdfplumber.open(pdf_file) as pdf:
             for pagina in pdf.pages:
-                # AJUSTE PARA MAC: extração de texto orientada por layout para evitar inversão
-                texto = pagina.extract_text(layout=True) 
-                if not texto: continue
-
-                dados_ia = extrair_dados_ia(texto, model)
-
-                for d in dados_ia:
-                    # 1. Lógica de Data (Herança) - Original Colab
-                    dt_extraida = formatar_data(d.get('data', ''))
-                    if dt_extraida:
-                        ultima_data_valida = dt_extraida
-                    else:
-                        dt_extraida = ultima_data_valida
-
-                    # 2. Limpeza do ID - Original Colab
-                    id_raw = str(d.get('id', '')).strip()
-                    id_limpo = re.sub(r'\D', '', id_raw)
-
-                    # 3. Limpeza do Nome - Original Colab
-                    nome_raw = str(d.get('nome', '')).replace('\n', ' ').strip().upper()
-
-                    # 4. Filtro de Validação - Original Colab
-                    e_lixo = any(termo in nome_raw for termo in termos_ignorar)
-
-                    if id_limpo and not e_lixo and len(nome_raw) > 3:
-                        todas_as_linhas_final.append([
-                            dt_extraida,    
-                            id_limpo,       
-                            nome_raw,       
-                            d.get('valor', 0.0), 
-                            data_hoje,      
-                            pdf_file.name       
+                texto = pagina.extract_text(layout=True)
+                if texto:
+                    dados = extrair_dados_ia(texto, model)
+                    for d in dados:
+                        # Monta a linha para a planilha (Data, ID, Nome, Valor, Data Proc, Origem)
+                        todas_as_linhas.append([
+                            d.get('data'), 
+                            d.get('id'), 
+                            d.get('nome', '').upper(), 
+                            d.get('valor'), 
+                            data_proc, 
+                            pdf_file.name
                         ])
-
-                time.sleep(1) 
         
-        progresso.progress((idx + 1) / len(arquivos_pdf))
+        progresso.progress((i + 1) / len(arquivos_pdf))
+        time.sleep(1) # Evitar bloqueio de taxa da API
 
-    # --- 4. GRAVAÇÃO NO GOOGLE SHEETS ---
-    if todas_as_linhas_final:
+    # Gravação Final
+    if todas_as_linhas:
         try:
-            sh = gc.open_by_key(SPREADSHEET_ID)
-            try:
-                worksheet = sh.worksheet(NOME_FOLHA)
-            except:
-                worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="2000", cols="6")
-
-            if not worksheet.get_all_values():
-                worksheet.append_row(["Data", "ID", "Nome", "Valor", "Data Execução", "Ficheiro Origem"])
-
-            worksheet.append_rows(todas_as_linhas_final)
-            st.success(f"✅ CONCLUÍDO: {len(todas_as_linhas_final)} linhas escritas.")
-            st.dataframe(todas_as_linhas_final)
+            worksheet.append_rows(todas_as_linhas)
+            st.balloons()
+            st.success(f"✅ Concluído! {len(todas_as_linhas)} linhas adicionadas à planilha.")
+            st.table(todas_as_linhas[:10]) # Mostra as primeiras 10 linhas como amostra
         except Exception as e:
-            st.error(f"Erro ao gravar: {e}")
+            st.error(f"Erro ao gravar na planilha: {e}")
     else:
-        st.warning("❌ Nenhum dado válido encontrado.")
+        st.warning("Nenhum dado válido foi encontrado nos PDFs.")
