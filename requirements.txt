@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+streamlit
+google-generativeai
+pdfplumber
+gspread
+google-auth
