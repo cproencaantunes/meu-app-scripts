@@ -77,28 +77,28 @@ try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="1000", cols="10")
-        # Cria cabeçalho começando na Coluna C (A e B vazias)
-        worksheet.append_row(["", "", "Data", "Processo", "Nome Completo", "Procedimento", "Data Execução", "Ficheiro"])
+        # No cabeçalho inicial, também removemos o avanço
+        worksheet.append_row(["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução", "Ficheiro"])
 
 except Exception as e:
     st.error(f"❌ Erro de Conexão: {e}")
     st.stop()
 
 # --- 4. INTERFACE ---
-st.title("💉 Doentes Anestesiados (Coluna C)")
+st.title("💉 Doentes Anestesiados (Escrita Forçada na Coluna C)")
 
 arquivos_pdf = st.file_uploader("Carregue os PDFs", type=['pdf'], accept_multiple_files=True)
 
 if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
     
-    # 1. Leitura de Duplicados (Ajustada para Coluna C)
     st.info("A verificar registos existentes...")
     dados_atuais = worksheet.get_all_values()
     registos_existentes = set()
     
+    # IMPORTANTE: Como os teus dados estão a partir da Coluna C, 
+    # o índice r[2] corresponde à Coluna C na leitura do gspread.
     if len(dados_atuais) > 1:
         for r in dados_atuais[1:]:
-            # Agora os dados estão nos índices 2, 3, 4 (Colunas C, D, E)
             if len(r) >= 5: 
                 chave = f"{r[2]}_{r[3]}_{r[4]}" 
                 registos_existentes.add(chave)
@@ -111,8 +111,6 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
         ultima_data_valida = ""
         with pdfplumber.open(pdf_file) as pdf:
             for i, pagina in enumerate(pdf.pages):
-                # if i == 0: continue # Descomente se quiser pular a 1ª página
-                
                 texto = pagina.extract_text()
                 if not texto: continue
                 dados_ia = extrair_dados_ia_com_espera(texto, model)
@@ -133,24 +131,33 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
                         chave_unica = f"{dt}_{processo}_{nome}"
                         
                         if chave_unica not in registos_existentes:
-                            # AQUI ESTÁ A MUDANÇA: Duas strings vazias no início
+                            # AQUI REMOVEMOS AS STRINGS VAZIAS DO INÍCIO
+                            # A lista começa logo com a Data
                             novas_linhas.append([
-                                "",          # Coluna A (Vazia)
-                                "",          # Coluna B (Vazia)
-                                dt,          # Coluna C
-                                processo,    # Coluna D
-                                nome,        # Coluna E
-                                proc_limpo,  # Coluna F
-                                data_hoje,   # Coluna G
-                                pdf_file.name # Coluna H
+                                dt,          # Será colocado na Coluna C
+                                processo,    # Será colocado na Coluna D
+                                nome,        # Será colocado na Coluna E
+                                proc_limpo,  # Será colocado na Coluna F
+                                data_hoje,   # Será colocado na Coluna G
+                                pdf_file.name # Será colocado na Coluna H
                             ])
                             registos_existentes.add(chave_unica)
         
         progresso.progress((idx + 1) / len(arquivos_pdf))
 
     if novas_linhas:
-        worksheet.append_rows(novas_linhas)
-        st.success(f"✅ {len(novas_linhas)} registos gravados a partir da Coluna C.")
+        # --- LÓGICA DE ESCRITA NA COLUNA C ---
+        # 1. Descobrimos a primeira linha livre (baseado na coluna C)
+        proxima_linha = len(dados_atuais) + 1
+        
+        # 2. Definimos o intervalo (ex: C10:H15)
+        # O gspread permite atualizar um range começando na Coluna 3 (C)
+        worksheet.update(
+            range_name=f"C{proxima_linha}", 
+            values=novas_linhas
+        )
+        
+        st.success(f"✅ {len(novas_linhas)} registos gravados diretamente na Coluna C.")
         st.dataframe(novas_linhas)
     else:
         st.warning("Nenhum registo novo encontrado.")
