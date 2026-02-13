@@ -28,13 +28,9 @@ def formatar_data_universal(data_str):
     if not data_str: return None
     s = str(data_str).strip()
     if "DD-MM-YYYY" in s.upper(): return None
-
-    # ISO -> PT
     match_iso = re.search(r'(\d{4})-(\d{2})-(\d{2})', s)
     if match_iso:
         return f"{match_iso.group(3)}-{match_iso.group(2)}-{match_iso.group(1)}"
-
-    # PT -> PT
     match_pt = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})', s)
     if match_pt:
         d, m, a = match_pt.groups()
@@ -69,29 +65,35 @@ try:
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(extrair_id_planilha(sheet_url))
     
-    NOME_FOLHA = 'especiais'
+    # NOME DA FOLHA ALTERADO CONFORME PEDIDO
+    NOME_FOLHA = 'ExamesEsp'
+    
     try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="2000", cols="10")
-        worksheet.append_row(["", "", "Data", "Processo", "Nome Completo", "Procedimento", "Data Execução"])
+        # Cabeçalho inicia logo na Coluna C para evitar conflitos com fórmulas em A e B
+        worksheet.update(range_name="C1", values=[["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução"]])
 except Exception as e:
     st.error(f"❌ Erro de Ligação: {e}")
     st.stop()
 
 # --- 4. INTERFACE ---
 st.title("🧪 Exames Especiais")
-st.info("Os dados serão gravados a partir da Coluna C.")
+st.info(f"Escrita direta na Coluna C da aba '{NOME_FOLHA}' (Preserva fórmulas em A e B).")
 
 arquivos_pdf = st.file_uploader("Upload PDFs", type=['pdf'], accept_multiple_files=True)
 
 if arquivos_pdf and st.button("🚀 Processar Especiais"):
-    todas_as_linhas = []
+    novas_linhas = []
     data_hoje = datetime.now().strftime("%d-%m-%Y %H:%M")
     termos_lixo = ["PROENÇA", "CPANTUNES", "PÁGINA", "UTILIZADOR", "GHCE9050"]
 
     progresso = st.progress(0)
     status = st.empty()
+
+    # Obter dados atuais para saber onde começar a escrever
+    dados_atuais = worksheet.get_all_values()
 
     for idx, pdf_file in enumerate(arquivos_pdf):
         status.text(f"📖 A ler: {pdf_file.name}")
@@ -117,9 +119,8 @@ if arquivos_pdf and st.button("🚀 Processar Especiais"):
                     processo = re.sub(r'\D', '', str(d.get('processo', '')))
                     proc = str(d.get('procedimento', '')).strip()
 
-                    # ESCRITA A PARTIR DA COLUNA C (A e B Vazias)
-                    todas_as_linhas.append([
-                        "", "",       # Colunas A e B
+                    # REMOVIDO O AVANÇO MANUAL "", ""
+                    novas_linhas.append([
                         data_corrente, # Coluna C
                         processo,      # Coluna D
                         nome,          # Coluna E
@@ -127,15 +128,20 @@ if arquivos_pdf and st.button("🚀 Processar Especiais"):
                         data_hoje      # Coluna G
                     ])
                 
-                time.sleep(2) # Evitar bloqueio da API
+                time.sleep(2) 
         progresso.progress((idx + 1) / len(arquivos_pdf))
 
     status.empty()
 
-    if todas_as_linhas:
-        worksheet.append_rows(todas_as_linhas)
+    if novas_linhas:
+        # Lógica de escrita forçada na Coluna C
+        proxima_linha = len(dados_atuais) + 1
+        worksheet.update(
+            range_name=f"C{proxima_linha}", 
+            values=novas_linhas
+        )
         st.balloons()
-        st.success(f"✅ {len(todas_as_linhas)} linhas enviadas para a aba '{NOME_FOLHA}'.")
-        st.dataframe(todas_as_linhas)
+        st.success(f"✅ {len(novas_linhas)} linhas gravadas na aba '{NOME_FOLHA}' (Coluna C).")
+        st.dataframe(novas_linhas)
     else:
         st.warning("Nada extraído.")
