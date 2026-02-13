@@ -3,76 +3,61 @@ import streamlit as st
 # Configuração da página
 st.set_page_config(page_title="Guia de Início", page_icon="📖", layout="wide")
 
-st.title("📖 Guia de Início - Sistema de Extração CUF")
+st.title("📖 Guia de Início - Sistema de Extração Pro")
 st.markdown("---")
 
-# --- SECÇÃO 1: DOWNLOAD DO TEMPLATE E ACESSO ---
-st.header("1️⃣ Preparar a Planilha")
+# --- SECÇÃO 1: PREPARAR A PLANILHA ---
+st.header("1️⃣ Preparar a sua Planilha")
 col_a, col_b = st.columns(2)
 
 with col_a:
     st.markdown("### 📑 Passo 1: Criar a sua cópia")
-    st.write("Clique no botão abaixo para abrir o modelo e faça uma cópia para a sua conta Google.")
+    st.write("Clique no botão abaixo para abrir o modelo oficial e faça uma cópia para a sua conta Google Drive pessoal.")
     st.link_button("Abrir Template do Excel ↗️", "https://docs.google.com/spreadsheets/d/1oyWViB-jafKCGKLTMCDcY5xShMNgtWVUjTqmZfzWQMM/edit?gid=0#gid=0")
 
 with col_b:
     st.markdown("### 🔑 Passo 2: Dar acesso ao sistema")
-    st.write("No botão **Partilhar** da sua planilha, adicione este e-mail como **Editor**:")
+    st.write("Para que o sistema consiga escrever os dados, vá ao botão **Partilhar** da sua planilha e adicione este e-mail como **Editor**:")
     st.code("pdf-extractor@gen-lang-client-0404678969.iam.gserviceaccount.com", language="text")
 
 st.markdown("---")
 
-# --- SECÇÃO 2: CONFIGURAÇÃO DE CHAVES ---
-st.header("2️⃣ Configurar a Ligação")
+# --- SECÇÃO 2: ATIVAÇÃO ---
+st.header("2️⃣ Ativar a Ligação")
 
-col_c, col_d = st.columns(2)
-
-with col_c:
-    st.markdown("### 🗝️ Obter a Gemini API Key")
-    st.write("A chave de inteligência deve ser gerada no Google AI Studio.")
-    st.link_button("Gerar API Key no Google AI Studio ↗️", "https://aistudio.google.com/app/apikey")
-    
-    st.warning("""
-    **⚠️ ATENÇÃO:** Deve utilizar um e-mail pessoal (@gmail.com). O sistema **não funcionará** com e-mails do domínio **jmellosaude.pt**, pois estes possuem restrições de segurança que bloqueiam a API.
-    """)
-
-with col_d:
-    st.markdown("### 🔗 Vincular no App")
-    st.write("Vá à página **🏠 Home** no menu lateral e introduza:")
-    st.markdown("""
-    * **Gemini API Key:** A chave que acabou de gerar.
-    * **Link da Planilha:** O URL da cópia que criou no Passo 1.
-    """)
+st.markdown("### 🔗 Vincular no App")
+st.write("Já não precisa de gerar chaves de inteligência artificial. O sistema utiliza agora uma ligação mestra de alta velocidade.")
+st.info("Basta ir à página **🏠 Home** no menu lateral e colar o **Link da sua Planilha** (o URL completo da cópia que criou no Passo 1).")
 
 # --- SECÇÃO 3: ONDE CARREGAR CADA RELATÓRIO ---
 st.markdown("---")
 st.header("3️⃣ Onde carregar os seus relatórios?")
-st.write("Escolha a página correta no menu lateral de acordo com o tipo de PDF:")
-
-
+st.write("Selecione a página correta no menu lateral de acordo com o tipo de ficheiro que deseja processar:")
 
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    st.info("### 💰 Honorários\nListagens de pagamentos. Salta automaticamente a primeira página.")
+    st.info("### 💰 Honorários\nProcessamento de listagens de pagamentos recebidos.")
 
 with c2:
-    st.success("### 💉 Anestesiados\nAtos anestésicos. Evita duplicados (Data + Processo + Nome).")
+    st.success("### 💉 Anestesiados\nExtração de atos anestésicos. O sistema evita automaticamente registos duplicados.")
 
 with c3:
-    st.warning("### 🧪 Especiais\nExames onde a data serve para um grupo de doentes.")
+    st.warning("### 🧪 Especiais\nExames e atos técnicos específicos (ExamesEsp).")
 
 with c4:
-    st.error("### 👨‍⚕️ Consultas\nListagens diárias de consultas. Extrai Data, Processo e Nome.")
+    st.error("### 👨‍⚕️ Consultas\nListagens diárias de consultas efetuadas.")
 
 # --- SECÇÃO 4: REGRAS DE OURO ---
 st.markdown("---")
 st.header("💡 Regras de Ouro")
 
 st.markdown("""
-* **Colunas A e B:** Devem permanecer vazias. O sistema escreve propositadamente a partir da **Coluna C**.
-* **Rate Limit:** Se aparecer um aviso de espera, não atualize a página. O sistema está a gerir o limite de tráfego da Google.
-* **Formato:** Use apenas PDFs digitais (onde consegue selecionar o texto). Scans de papel podem falhar.
+* **Fórmulas Pessoais:** Pode criar as suas fórmulas nas **Colunas A e B**. O sistema escreve sempre a partir da **Coluna C**, garantindo que não apaga os seus cálculos.
+* **Privacidade:** Os dados são processados e enviados diretamente para a sua planilha. O sistema não armazena cópias dos seus PDFs.
+* **Qualidade do PDF:** Utilize apenas PDFs originais (digitais). Documentos digitalizados (fotos/scans) podem comprometer a precisão da leitura.
+* **Processamento:** Graças à sua subscrição, o sistema utiliza o motor **Gemini 2.0 Flash Tier 1**, permitindo processamentos muito mais rápidos e sem interrupções.
 """)
 
-st.caption("Sistema de Apoio Clínico | v2.6 (2026)")
+st.markdown("---")
+st.caption("Sistema de Apoio Clínico Profissional | v3.0 (2026)")
