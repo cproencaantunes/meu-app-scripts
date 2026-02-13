@@ -11,11 +11,16 @@ from google.oauth2.service_account import Credentials
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="Doentes Anestesiados", page_icon="💉", layout="wide")
 
-user_api_key = st.session_state.get('user_api_key')
+# Lemos a TUA chave mestra e o link do cliente (vindo da Home)
+master_api_key = st.secrets.get("GEMINI_API_KEY")
 sheet_url = st.session_state.get('sheet_url')
 
-if not user_api_key or not sheet_url:
-    st.warning("⚠️ Configuração em falta! Vá à página **Home (🏠)** e configure as chaves.")
+if not master_api_key:
+    st.error("❌ Erro Crítico: GEMINI_API_KEY não encontrada nos Secrets.")
+    st.stop()
+
+if not sheet_url:
+    st.warning("⚠️ Configuração em falta! Por favor, insira o link da sua planilha na página **Home (🏠)**.")
     st.stop()
 
 # --- 2. FUNÇÕES DE SUPORTE ---
@@ -40,7 +45,7 @@ def formatar_data(data_str):
 
 def extrair_dados_ia_com_espera(texto_pagina, model, max_tentativas=3):
     prompt = """
-    Analisa o texto médico.
+    Analisa o texto médico CUF.
     REGRAS:
     1. DATA: Formato DD-MM-YYYY.
     2. NOME: Nome completo MAIÚSCULAS.
@@ -58,14 +63,14 @@ def extrair_dados_ia_com_espera(texto_pagina, model, max_tentativas=3):
             return json.loads(match.group()) if match else []
         except Exception as e:
             if "429" in str(e):
-                time.sleep((i + 1) * 5)
+                time.sleep((i + 1) * 2) # Tempo reduzido pois Tier 1 tem RPM maior
             else:
                 return []
     return []
 
 # --- 3. CONEXÃO ---
 try:
-    genai.configure(api_key=user_api_key)
+    genai.configure(api_key=master_api_key)
     model = genai.GenerativeModel("models/gemini-2.0-flash")
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
@@ -77,26 +82,26 @@ try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="1000", cols="10")
-        # No cabeçalho inicial, também removemos o avanço
-        worksheet.append_row(["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução", "Ficheiro"])
+        # Cabeçalho na Coluna C (para ignorar A e B)
+        worksheet.update(range_name="C1", values=[["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução", "Ficheiro"]])
 
 except Exception as e:
     st.error(f"❌ Erro de Conexão: {e}")
     st.stop()
 
 # --- 4. INTERFACE ---
-st.title("💉 Doentes Anestesiados (Escrita Forçada na Coluna C)")
+st.title("💉 Doentes Anestesiados (Escrita na Coluna C)")
+st.info("Utilizando motor Gemini Tier 1. A escrita preserva as fórmulas nas Colunas A e B.")
 
-arquivos_pdf = st.file_uploader("Carregue os PDFs", type=['pdf'], accept_multiple_files=True)
+arquivos_pdf = st.file_uploader("Carregue os PDFs de Anestesia", type=['pdf'], accept_multiple_files=True)
 
 if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
     
-    st.info("A verificar registos existentes...")
+    st.info("A verificar registos existentes para evitar duplicados...")
     dados_atuais = worksheet.get_all_values()
     registos_existentes = set()
     
-    # IMPORTANTE: Como os teus dados estão a partir da Coluna C, 
-    # o índice r[2] corresponde à Coluna C na leitura do gspread.
+    # Verificação de duplicados (Coluna C=2, D=3, E=4 no índice do Python)
     if len(dados_atuais) > 1:
         for r in dados_atuais[1:]:
             if len(r) >= 5: 
@@ -131,33 +136,30 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento"):
                         chave_unica = f"{dt}_{processo}_{nome}"
                         
                         if chave_unica not in registos_existentes:
-                            # AQUI REMOVEMOS AS STRINGS VAZIAS DO INÍCIO
-                            # A lista começa logo com a Data
+                            # Lista inicia logo na Data (será mapeada para C)
                             novas_linhas.append([
-                                dt,          # Será colocado na Coluna C
-                                processo,    # Será colocado na Coluna D
-                                nome,        # Será colocado na Coluna E
-                                proc_limpo,  # Será colocado na Coluna F
-                                data_hoje,   # Será colocado na Coluna G
-                                pdf_file.name # Será colocado na Coluna H
+                                dt,          
+                                processo,    
+                                nome,        
+                                proc_limpo,  
+                                data_hoje,   
+                                pdf_file.name 
                             ])
                             registos_existentes.add(chave_unica)
         
         progresso.progress((idx + 1) / len(arquivos_pdf))
 
     if novas_linhas:
-        # --- LÓGICA DE ESCRITA NA COLUNA C ---
-        # 1. Descobrimos a primeira linha livre (baseado na coluna C)
-        proxima_linha = len(dados_atuais) + 1
-        
-        # 2. Definimos o intervalo (ex: C10:H15)
-        # O gspread permite atualizar um range começando na Coluna 3 (C)
-        worksheet.update(
-            range_name=f"C{proxima_linha}", 
-            values=novas_linhas
-        )
-        
-        st.success(f"✅ {len(novas_linhas)} registos gravados diretamente na Coluna C.")
-        st.dataframe(novas_linhas)
+        try:
+            proxima_linha = len(dados_atuais) + 1
+            # ESCRITA FORÇADA NA COLUNA C
+            worksheet.update(
+                range_name=f"C{proxima_linha}", 
+                values=novas_linhas
+            )
+            st.success(f"✅ {len(novas_linhas)} registos gravados diretamente na Coluna C.")
+            st.dataframe(novas_linhas)
+        except Exception as e:
+            st.error(f"❌ Erro ao gravar dados: {e}")
     else:
-        st.warning("Nenhum registo novo encontrado.")
+        st.warning("Nenhum registo novo (não duplicado) encontrado.")
