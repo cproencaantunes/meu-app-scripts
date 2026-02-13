@@ -11,11 +11,16 @@ from google.oauth2.service_account import Credentials
 # --- 1. CONFIGURAÇÕES INICIAIS ---
 st.set_page_config(page_title="Exames Especiais", page_icon="🧪", layout="wide")
 
-user_api_key = st.session_state.get('user_api_key')
+# Lemos a TUA chave mestra e o link do cliente (vindo da Home)
+master_api_key = st.secrets.get("GEMINI_API_KEY")
 sheet_url = st.session_state.get('sheet_url')
 
-if not user_api_key or not sheet_url:
-    st.warning("⚠️ Configuração em falta! Vá à página **Home (🏠)**.")
+if not master_api_key:
+    st.error("❌ Erro Crítico: GEMINI_API_KEY não encontrada nos Secrets.")
+    st.stop()
+
+if not sheet_url:
+    st.warning("⚠️ Configuração em falta! Por favor, insira o link da sua planilha na página **Home (🏠)**.")
     st.stop()
 
 # --- 2. FUNÇÕES DE SUPORTE ---
@@ -51,38 +56,37 @@ def extrair_dados_ia_com_retry(texto_pagina, model, max_retries=3):
             return json.loads(match.group()) if match else []
         except Exception as e:
             if "429" in str(e):
-                time.sleep((i + 1) * 6)
+                time.sleep((i + 1) * 2) # Tempo otimizado para Tier 1
             else:
                 return []
     return []
 
 # --- 3. CONEXÃO ---
 try:
-    genai.configure(api_key=user_api_key)
+    genai.configure(api_key=master_api_key)
     model = genai.GenerativeModel("models/gemini-2.0-flash")
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(extrair_id_planilha(sheet_url))
     
-    # NOME DA FOLHA ALTERADO CONFORME PEDIDO
     NOME_FOLHA = 'ExamesEsp'
     
     try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="2000", cols="10")
-        # Cabeçalho inicia logo na Coluna C para evitar conflitos com fórmulas em A e B
+        # Cabeçalho inicia logo na Coluna C
         worksheet.update(range_name="C1", values=[["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução"]])
 except Exception as e:
     st.error(f"❌ Erro de Ligação: {e}")
     st.stop()
 
 # --- 4. INTERFACE ---
-st.title("🧪 Exames Especiais")
-st.info(f"Escrita direta na Coluna C da aba '{NOME_FOLHA}' (Preserva fórmulas em A e B).")
+st.title("🧪 Exames Especiais (Escrita na Coluna C)")
+st.info(f"O sistema utiliza o motor profissional Tier 1. Escrita direta na Coluna C da aba '{NOME_FOLHA}'.")
 
-arquivos_pdf = st.file_uploader("Upload PDFs", type=['pdf'], accept_multiple_files=True)
+arquivos_pdf = st.file_uploader("Upload PDFs de Exames Especiais", type=['pdf'], accept_multiple_files=True)
 
 if arquivos_pdf and st.button("🚀 Processar Especiais"):
     novas_linhas = []
@@ -119,7 +123,7 @@ if arquivos_pdf and st.button("🚀 Processar Especiais"):
                     processo = re.sub(r'\D', '', str(d.get('processo', '')))
                     proc = str(d.get('procedimento', '')).strip()
 
-                    # REMOVIDO O AVANÇO MANUAL "", ""
+                    # A lista começa logo na data para mapear com a Coluna C
                     novas_linhas.append([
                         data_corrente, # Coluna C
                         processo,      # Coluna D
@@ -128,20 +132,21 @@ if arquivos_pdf and st.button("🚀 Processar Especiais"):
                         data_hoje      # Coluna G
                     ])
                 
-                time.sleep(2) 
         progresso.progress((idx + 1) / len(arquivos_pdf))
 
     status.empty()
 
     if novas_linhas:
-        # Lógica de escrita forçada na Coluna C
-        proxima_linha = len(dados_atuais) + 1
-        worksheet.update(
-            range_name=f"C{proxima_linha}", 
-            values=novas_linhas
-        )
-        st.balloons()
-        st.success(f"✅ {len(novas_linhas)} linhas gravadas na aba '{NOME_FOLHA}' (Coluna C).")
-        st.dataframe(novas_linhas)
+        try:
+            proxima_linha = len(dados_atuais) + 1
+            worksheet.update(
+                range_name=f"C{proxima_linha}", 
+                values=novas_linhas
+            )
+            st.balloons()
+            st.success(f"✅ {len(novas_linhas)} linhas gravadas na aba '{NOME_FOLHA}' (Coluna C).")
+            st.dataframe(novas_linhas)
+        except Exception as e:
+            st.error(f"❌ Erro ao gravar dados: {e}")
     else:
-        st.warning("Nada extraído.")
+        st.warning("Nada extraído dos ficheiros carregados.")
