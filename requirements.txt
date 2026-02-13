@@ -6,3 +6,8 @@ google-generativeai
 pdfplumber
 gspread
 google-auth
+streamlit
+google-generativeai>=0.8.0
+gspread
+pdfplumber
+google-auth
