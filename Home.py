@@ -2,51 +2,71 @@ import streamlit as st
 
 st.set_page_config(page_title="Hub de Extração Pro", page_icon="🏥", layout="wide")
 
-st.title("🏥 Central de Processamento de Documentos")
+# --- LÓGICA DE AUTENTICAÇÃO ---
+def check_login():
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
 
-# Criar a barra lateral global
-with st.sidebar:
-    st.header("⚙️ Configuração")
-    st.info("Insira o link da sua planilha pessoal para começar.")
-    
-    # Guardar apenas o URL da planilha no session_state
-    # A API Key agora é carregada internamente via Secrets
-    st.session_state['sheet_url'] = st.text_input(
-        "Link da Planilha Google", 
-        value=st.session_state.get('sheet_url', ''),
-        placeholder="https://docs.google.com/spreadsheets/d/..."
-    )
-
-    if "gcp_service_account" in st.secrets:
-        st.divider()
-        st.markdown("### 🔑 Autorização")
-        st.write("Partilhe a sua planilha como **'Editor'** com este e-mail:")
-        st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+    if not st.session_state["authenticated"]:
+        st.title("🔐 Acesso Restrito - Central de Documentos")
         
-    st.divider()
-    st.caption("Versão Profissional v3.0 | 2026")
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
+            with st.form("login_form"):
+                user = st.text_input("Utilizador")
+                password = st.text_input("Password", type="password")
+                if st.form_submit_button("Entrar na Plataforma"):
+                    allowed_users = st.secrets.get("users", {})
+                    # Verifica se o utilizador existe e a pass coincide
+                    if user in allowed_users and str(allowed_users[user]) == password:
+                        st.session_state["authenticated"] = True
+                        st.session_state["username"] = user
+                        st.rerun()
+                    else:
+                        st.error("❌ Credenciais incorretas.")
+        return False
+    return True
 
-# Conteúdo Principal
-st.markdown("---")
-st.markdown("""
-### 👋 Bem-vindo ao seu Assistente de Extração!
-O sistema está pronto a utilizar. Utilize o menu lateral para aceder às ferramentas:
+# --- CONTEÚDO SÓ APARECE SE LOGADO ---
+if check_login():
+    st.title("🏥 Central de Processamento de Documentos")
 
-* **💰 Honorários**: Processamento de listagens de pagamentos.
-* **💉 Anestesiados**: Extração de atos anestésicos com filtro de duplicados.
-* **🧪 Especiais**: Processamento de exames e atos técnicos (ExamesEsp).
-* **👨‍⚕️ Consultas**: Listagens diárias de consultas.
+    with st.sidebar:
+        st.header("⚙️ Configuração")
+        st.session_state['sheet_url'] = st.text_input(
+            "Link da Planilha Google", 
+            value=st.session_state.get('sheet_url', ''),
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+        )
 
----
-### 💡 Como funciona?
-1.  Configure o link da sua planilha à esquerda.
-2.  Escolha a página pretendida no menu lateral.
-3.  Carregue os seus ficheiros PDF.
-4.  O sistema extrai os dados e insere-os automaticamente na sua folha, **preservando as suas fórmulas nas Colunas A e B**.
-""")
+        if "gcp_service_account" in st.secrets:
+            st.divider()
+            st.markdown("### 🔑 Autorização")
+            st.write("Partilhe a sua planilha como **'Editor'** com:")
+            st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+            
+        st.divider()
+        if st.button("🚪 Sair"):
+            st.session_state["authenticated"] = False
+            st.rerun()
 
-# Pequeno validador visual
-if st.session_state.get('sheet_url'):
-    st.success("✅ Link da planilha detetado. Pode avançar para as ferramentas!")
-else:
-    st.warning("👈 Por favor, introduza o link da sua planilha na barra lateral para ativar o sistema.")
+    # Conteúdo Principal
+    st.markdown("---")
+    st.markdown(f"### 👋 Bem-vindo, Dr. {st.session_state['username']}")
+    
+    # Cards de Ferramentas Ativas
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("💰 **Honorários**\n\nProcessamento de listagens de pagamentos.")
+    with col2:
+        st.success("🔬 **Técnicas e Exames**\n\nEspecial para Gastro e Dor (Múltiplos atos).")
+
+    st.markdown("""
+    ### 💡 Como funciona?
+    1.  Configure o link da sua planilha à esquerda.
+    2.  Selecione a ferramenta no menu lateral.
+    3.  O sistema extrai os dados e usa a **Coluna C como Chave Única** para o seu VLOOKUP.
+    """)
+
+    if not st.session_state.get('sheet_url'):
+        st.warning("👈 Introduza o link da sua planilha na barra lateral para ativar o sistema.")
