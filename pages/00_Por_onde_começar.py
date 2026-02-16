@@ -14,6 +14,14 @@ with col_a:
     st.markdown("### 📑 Passo 1: Criar a sua cópia")
     st.write("Clique no botão abaixo para abrir o modelo oficial e faça uma cópia para a sua conta Google Drive pessoal.")
     st.link_button("Abrir Template do Excel ↗️", "https://docs.google.com/spreadsheets/d/1oyWViB-jafKCGKLTMCDcY5xShMNgtWVUjTqmZfzWQMM/edit?gid=0#gid=0")
+    
+    # --- NOVA INFORMAÇÃO SOLICITADA ---
+    st.warning("""
+    **💡 Já tem uma planilha própria?** Se preferir não usar o template, deve garantir que as suas abas têm exatamente estes nomes:  
+    `pagos`, `ExamesEsp`, `Consulta`, `Anestesiados`.  
+    
+    ⚠️ **Atenção:** O sistema é *Case Sensitive* (diferencia maiúsculas de minúsculas). Escreva os nomes exatamente como aparecem acima.
+    """)
 
 with col_b:
     st.markdown("### 🔑 Passo 2: Dar acesso ao sistema")
