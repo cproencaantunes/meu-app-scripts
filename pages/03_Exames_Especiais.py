@@ -41,31 +41,27 @@ RE_IGNORAR = re.compile(
     r'Pág\.\s*\d'
 )
 
-# Separador nome→código: bloco de maiúsculas (≥4 chars) antes do código numérico
-# Cobre GASTROENTEROLO, GASTRO, CIRURGIA, MEDICINA, ORTOPEDIA, etc.
-_SEP = r'[A-ZÁÀÂÃÉÈÊÍÏÓÒÔÕÚÙÛÇ]{4,}'
-
 # Linha COM data de ato
 RE_COM_DATA = re.compile(
     r'^(\d{4}-\d{2}-\d{2})\s+'   # data do ato YYYY-MM-DD
     r'.+?\s+'                      # nome do grupo (qualquer texto)
-    r'(\d+)\s+'                    # total do grupo
+    r'\d+\s+'                      # total do grupo
     r'([A-Z]+/\d+)\s+'            # processo (CCC/245230, HCIS/123, etc.)
-    r'(.+?)'                       # nome do doente (lazy)
-    r'[A-Z]{4,}'                   # separador especialidade
+    r'(.+?)'                       # nome do doente
+    r'GASTROENTEROLO\s*'           # separador de especialidade (fixo)
     r'(\w+)\s+'                    # código do ato
     r'(.+?)\s+'                    # descrição do procedimento
-    r'\d+\s+[A-Z]/[A-Z]'          # qtd e fact — âncora final
+    r'\d+\s+[A-Z]/[A-Z]$'         # qtd e fact — âncora final
 )
 
 # Linha SEM data
 RE_SEM_DATA = re.compile(
-    r'^([A-Z]+/\d+)\s+'   # processo (qualquer prefixo maiúsculas + barra + dígitos)
-    r'(.+?)'               # nome
-    r'[A-Z]{4,}'           # separador especialidade
-    r'(\w+)\s+'            # código
-    r'(.+?)\s+'            # procedimento
-    r'\d+\s+[A-Z]/[A-Z]'  # âncora final
+    r'^([A-Z]+/\d+)\s+'   # processo (qualquer prefixo)
+    r'(.+?)'               # nome do doente
+    r'GASTROENTEROLO\s*'   # separador de especialidade (fixo)
+    r'(\w+)\s+'            # código do ato
+    r'(.+?)\s+'            # descrição do procedimento
+    r'\d+\s+[A-Z]/[A-Z]$' # âncora final
 )
 
 
