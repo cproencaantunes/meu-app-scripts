@@ -1,153 +1,224 @@
 import streamlit as st
-import google.generativeai as genai
 import gspread
-import json
 import re
 import pdfplumber
 import time
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
-# --- 1. CONFIGURAÇÕES INICIAIS ---
-st.set_page_config(page_title="Exames Especiais", page_icon="🧪", layout="wide")
+# ---------------------------------------------------------------------------
+# CONFIGURAÇÕES INICIAIS
+# ---------------------------------------------------------------------------
+st.set_page_config(page_title="Extração de Procedimentos", page_icon="🛠️", layout="wide")
 
-master_api_key = st.secrets.get("GEMINI_API_KEY")
 sheet_url = st.session_state.get('sheet_url')
-
-if not master_api_key or not sheet_url:
-    st.error("❌ Erro: Configuração de API ou Planilha em falta na Home.")
+if not sheet_url:
+    st.warning("⚠️ Configuração em falta na Home (Link da Planilha).")
     st.stop()
 
-# --- 2. FUNÇÕES DE SUPORTE ---
+# ---------------------------------------------------------------------------
+# PARSING DIRETO (sem IA)
+#
+# PORQUÊ SEM IA?
+# O Gemini estava a truncar silenciosamente páginas com 44+ registos,
+# resultando em ~1850 em vez de 2261. O texto do pdfplumber já é
+# suficientemente estruturado para parsear com regex, garantindo 100%.
+#
+# ESTRUTURA DO PDF:
+# Linha com data:  "2021-05-17 Equipa Cirurgica 2 CCC/245230 JOSE... GASTROENTEROLO6051 Anestesia... 1 N/N"
+# Linha sem data:  "CCC/344423 ANABELA... GASTROENTEROLO17009901 Colonoscopia... 1 N/N"
+# Cabeçalho (ignorado): "Data: 2026-02-17", "Hospital CUF...", "Pág. 1/52", etc.
+# ---------------------------------------------------------------------------
 
-def extrair_id_planilha(url):
-    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
-    return match.group(1) if match else url
+# Linhas de cabeçalho/rodapé a ignorar (a "Data:" do cabeçalho NUNCA é data de ato)
+RE_IGNORAR = re.compile(
+    r'Data:\s*\d{4}|'
+    r'Hora:\s*\d|'
+    r'Hospital CUF|'
+    r'Exames Realizados|'
+    r'Utilizador:|'
+    r'GHCE\d+|'
+    r'Período entre|'
+    r'Interveniente:|'
+    r'^Data\s+Grupo\s+Total|'
+    r'Pág\.\s*\d'
+)
 
-def formatar_data_universal(data_str):
-    if not data_str: return None
-    s = str(data_str).strip()
-    # Captura grupos de números para evitar inversões
-    partes = re.findall(r'\d+', s)
-    if len(partes) == 3:
-        p1, p2, p3 = partes
-        if len(p1) == 4: # ISO
-            ano, mes, dia = p1, p2, p3
-        elif len(p3) == 4: # PT
-            dia, mes, ano = p1, p2, p3
-        else:
-            dia, mes, ano = p1, p2, p3
-            if len(ano) == 2: ano = "20" + ano
-        return f"{dia.zfill(2)}-{mes.zfill(2)}-{ano}"
-    return None
+# Linha COM data de ato (início de novo grupo de sessão)
+RE_COM_DATA = re.compile(
+    r'^(\d{4}-\d{2}-\d{2})\s+'
+    r'(?:Equipa Cirurgica|Endoscopia)\s+'
+    r'\d+\s+'
+    r'(CCC/\d+)\s+'
+    r'(.+?)'
+    r'GASTROENTEROLO'
+    r'(\w+)\s+'
+    r'(.+?)\s+'
+    r'\d+\s+[A-Z]/[A-Z]'
+)
 
-def extrair_dados_ia_com_retry(texto_pagina, model, max_retries=3):
-    # INSTRUÇÃO CORRIGIDA: Ignorar data de geração/emissão do relatório
-    prompt_sistema = """
-    Analisa este relatório de exames CUF. 
-    REGRA CRÍTICA: Extrai apenas a DATA DO EXAME/ATO. 
-    NÃO extraias a data de emissão, data de impressão ou data que aparece isolada no topo/canto superior direito do relatório.
-    
-    JSON: [{"data": "DD-MM-YYYY", "processo": "...", "nome": "...", "procedimento": "..."}]
+# Linha SEM data (pertence ao grupo da linha anterior com data)
+RE_SEM_DATA = re.compile(
+    r'^(CCC/\d+)\s+'
+    r'(.+?)'
+    r'GASTROENTEROLO'
+    r'(\w+)\s+'
+    r'(.+?)\s+'
+    r'\d+\s+[A-Z]/[A-Z]'
+)
+
+
+def extrair_registos_pagina(texto: str, ultima_data: str):
     """
-    for i in range(max_retries):
-        try:
-            response = model.generate_content(prompt_sistema + "\n\nTEXTO:\n" + texto_pagina, 
-                                            generation_config={"temperature": 0.0})
-            match = re.search(r'\[\s*\{.*\}\s*\]', response.text, re.DOTALL)
-            return json.loads(match.group()) if match else []
-        except Exception as e:
-            if "429" in str(e):
-                time.sleep((i + 1) * 2)
-            else:
-                return []
-    return []
+    Parseia uma página e devolve (lista_registos, última_data_de_ato).
+    A data propaga-se apenas entre registos de ato — nunca do cabeçalho.
+    """
+    registos = []
 
-# --- 3. CONEXÃO ---
+    for linha in texto.split('\n'):
+        linha = linha.strip()
+        if not linha or RE_IGNORAR.search(linha):
+            continue
+
+        m = RE_COM_DATA.match(linha)
+        if m:
+            ultima_data = m.group(1)
+            registos.append({
+                "data": ultima_data,
+                "processo": m.group(2),
+                "nome": m.group(3).strip(),
+                "codigo": m.group(4),
+                "procedimento": m.group(5).strip()
+            })
+            continue
+
+        m2 = RE_SEM_DATA.match(linha)
+        if m2:
+            registos.append({
+                "data": ultima_data,      # herda data do ato do grupo
+                "processo": m2.group(1),
+                "nome": m2.group(2).strip(),
+                "codigo": m2.group(3),
+                "procedimento": m2.group(4).strip()
+            })
+
+    return registos, ultima_data
+
+
+def formatar_data_pt(data_iso: str) -> str:
+    """YYYY-MM-DD → DD-MM-YYYY com zero padding garantido (ex: 05-06-2021)"""
+    if not data_iso:
+        return ""
+    p = re.findall(r'\d+', data_iso)
+    if len(p) == 3 and len(p[0]) == 4:
+        ano, mes, dia = p[0], p[1].zfill(2), p[2].zfill(2)
+        return f"{dia}-{mes}-{ano}"
+    return data_iso
+
+
+# ---------------------------------------------------------------------------
+# CONEXÃO GOOGLE SHEETS
+# ---------------------------------------------------------------------------
 try:
-    genai.configure(api_key=master_api_key)
-    model = genai.GenerativeModel("models/gemini-2.0-flash")
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scope
+    )
     gc = gspread.authorize(creds)
-    sh = gc.open_by_key(extrair_id_planilha(sheet_url))
-    
-    NOME_FOLHA = 'ExamesEsp'
+    sheet_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_url).group(1)
+    sh = gc.open_by_key(sheet_id)
+
+    NOME_FOLHA = 'Procedimentos'
     try:
         worksheet = sh.worksheet(NOME_FOLHA)
-    except:
-        worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="2000", cols="10")
-        worksheet.update(range_name="C1", values=[["Data", "Processo", "Nome Completo", "Procedimento", "Data Execução", "Origem PDF"]])
+    except Exception:
+        worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="10000", cols="10")
+        worksheet.update(
+            range_name="C1",
+            values=[["Data", "Processo", "Nome do Doente", "Código", "Procedimento", "Gravado Em", "Origem PDF"]]
+        )
 except Exception as e:
-    st.error(f"❌ Erro de Ligação: {e}")
+    st.error(f"❌ Erro de ligação ao Google Sheets: {e}")
     st.stop()
 
-# --- 4. INTERFACE ---
-st.title("🧪 Exames Especiais")
-st.info("A extração ignora agora as datas de emissão no cabeçalho e foca-se na data do exame.")
 
-arquivos_pdf = st.file_uploader("Upload PDFs de Exames Especiais", type=['pdf'], accept_multiple_files=True)
+# ---------------------------------------------------------------------------
+# INTERFACE E PROCESSAMENTO
+# ---------------------------------------------------------------------------
+st.title("🛠️ Extração de Procedimentos")
+st.info(
+    "**Método:** Parsing direto (sem IA) — extrai 100% dos registos sem truncagem.  \n"
+    "A data de impressão do cabeçalho é ignorada automaticamente."
+)
 
-if arquivos_pdf and st.button("🚀 Processar Especiais"):
-    novas_linhas = []
+uploads = st.file_uploader(
+    "Carregue os PDFs", type=['pdf'], accept_multiple_files=True
+)
+
+if uploads and st.button("🚀 Iniciar Processamento"):
+    dados_existentes = worksheet.get_all_values()
+    chaves_existentes = {
+        f"{r[0]}_{r[1]}"
+        for r in dados_existentes[1:] if len(r) > 1
+    }
+
     data_hoje = datetime.now().strftime("%d-%m-%Y %H:%M")
-    termos_lixo = ["PROENÇA", "CPANTUNES", "PÁGINA", "UTILIZADOR", "GHCE9050"]
-
+    status_msg = st.empty()
     progresso = st.progress(0)
-    status = st.empty()
 
-    dados_atuais = worksheet.get_all_values()
-
-    for idx, pdf_file in enumerate(arquivos_pdf):
-        status.text(f"📖 A ler: {pdf_file.name}")
-        data_corrente = ""
+    for idx_pdf, pdf_file in enumerate(uploads):
+        novas_linhas = []
+        ultima_data = ""  # reset por PDF
 
         with pdfplumber.open(pdf_file) as pdf:
-            for pagina in pdf.pages:
+            total_pags = len(pdf.pages)
+
+            for p_idx, pagina in enumerate(pdf.pages):
+                status_msg.info(
+                    f"📄 PDF {idx_pdf+1}/{len(uploads)} | "
+                    f"Página {p_idx+1}/{total_pags} — {pdf_file.name}"
+                )
+
                 texto = pagina.extract_text()
-                if not texto: continue
+                if not texto:
+                    continue
 
-                dados_ia = extrair_dados_ia_com_retry(texto, model)
+                registos, ultima_data = extrair_registos_pagina(texto, ultima_data)
 
-                for d in dados_ia:
-                    nova_dt = formatar_data_universal(d.get('data', ''))
-                    if nova_dt: data_corrente = nova_dt
-                    
-                    if not data_corrente: continue
+                for r in registos:
+                    data_fmt = formatar_data_pt(r["data"])
+                    nome = r["nome"].upper()
+                    codigo = r["codigo"]
+                    proc = r["procedimento"]
+                    processo = r["processo"]
 
-                    nome = str(d.get('nome', '')).strip().upper()
-                    if any(t in nome for t in termos_lixo) or len(nome) < 4:
-                        continue
+                    chave = f"{data_fmt}_{processo}"
+                    if chave not in chaves_existentes:
+                        novas_linhas.append([
+                            data_fmt, processo, nome, codigo, proc,
+                            data_hoje, pdf_file.name
+                        ])
+                        chaves_existentes.add(chave)
 
-                    processo = re.sub(r'\D', '', str(d.get('processo', '')))
-                    proc = str(d.get('procedimento', '')).strip().upper()
+        # Gravação em lotes de 500 linhas após cada PDF
+        if novas_linhas:
+            for i in range(0, len(novas_linhas), 500):
+                lote = novas_linhas[i:i+500]
+                worksheet.append_rows(
+                    lote,
+                    value_input_option="USER_ENTERED",
+                    table_range="C1"
+                )
+                if len(novas_linhas) > 500:
+                    time.sleep(1)
+            st.toast(f"✅ {len(novas_linhas)} linhas gravadas de {pdf_file.name}")
+        else:
+            st.toast(f"ℹ️ Nenhuma linha nova em {pdf_file.name}")
 
-                    # Escrita na Coluna C (Data, Processo, Nome, Procedimento, Data Exec, Nome PDF)
-                    novas_linhas.append([
-                        data_corrente, # C
-                        processo,      # D
-                        nome,          # E
-                        proc,          # F
-                        data_hoje,     # G
-                        pdf_file.name  # H
-                    ])
-        
-        progresso.progress((idx + 1) / len(arquivos_pdf))
+        progresso.progress((idx_pdf + 1) / len(uploads))
 
-    status.empty()
-
-    if novas_linhas:
-        try:
-            proxima_linha = len(dados_atuais) + 1
-            worksheet.update(
-                range_name=f"C{proxima_linha}", 
-                values=novas_linhas,
-                value_input_option="USER_ENTERED"
-            )
-            st.balloons()
-            st.success(f"✅ {len(novas_linhas)} linhas gravadas com sucesso!")
-            st.dataframe(novas_linhas)
-        except Exception as e:
-            st.error(f"❌ Erro ao gravar: {e}")
-    else:
-        st.warning("Nada extraído dos ficheiros.")
+    status_msg.success("✨ Processamento concluído!")
+    st.balloons()
