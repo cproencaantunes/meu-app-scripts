@@ -19,52 +19,53 @@ if not sheet_url:
 # ---------------------------------------------------------------------------
 # PARSING DIRETO (sem IA)
 #
-# PORQUÊ SEM IA?
-# O Gemini estava a truncar silenciosamente páginas com 44+ registos,
-# resultando em ~1850 em vez de 2261. O texto do pdfplumber já é
-# suficientemente estruturado para parsear com regex, garantindo 100%.
+# Regex genéricos: funcionam com qualquer prefixo de processo (CCC/, HCIS/, etc.)
+# e qualquer nome de especialidade (GASTROENTEROLO, CIRURGIA, MEDICINA, etc.)
 #
 # ESTRUTURA DO PDF:
 # Linha com data:  "2021-05-17 Equipa Cirurgica 2 CCC/245230 JOSE... GASTROENTEROLO6051 Anestesia... 1 N/N"
 # Linha sem data:  "CCC/344423 ANABELA... GASTROENTEROLO17009901 Colonoscopia... 1 N/N"
-# Cabeçalho (ignorado): "Data: 2026-02-17", "Hospital CUF...", "Pág. 1/52", etc.
+# Cabeçalho (ignorado): "Data: 2026-02-17", "Hospital ...", "Pág. 1/52", etc.
 # ---------------------------------------------------------------------------
 
-# Linhas de cabeçalho/rodapé a ignorar (a "Data:" do cabeçalho NUNCA é data de ato)
 RE_IGNORAR = re.compile(
     r'Data:\s*\d{4}|'
     r'Hora:\s*\d|'
-    r'Hospital CUF|'
+    r'Hospital |'
     r'Exames Realizados|'
     r'Utilizador:|'
-    r'GHCE\d+|'
+    r'GHC[A-Z]\d+|'
     r'Período entre|'
     r'Interveniente:|'
     r'^Data\s+Grupo\s+Total|'
     r'Pág\.\s*\d'
 )
 
-# Linha COM data de ato (início de novo grupo de sessão)
+# Separador nome→código: bloco de maiúsculas (≥4 chars) antes do código numérico
+# Cobre GASTROENTEROLO, GASTRO, CIRURGIA, MEDICINA, ORTOPEDIA, etc.
+_SEP = r'[A-ZÁÀÂÃÉÈÊÍÏÓÒÔÕÚÙÛÇ]{4,}'
+
+# Linha COM data de ato
 RE_COM_DATA = re.compile(
-    r'^(\d{4}-\d{2}-\d{2})\s+'
-    r'(?:Equipa Cirurgica|Endoscopia)\s+'
-    r'\d+\s+'
-    r'(CCC/\d+)\s+'
-    r'(.+?)'
-    r'GASTROENTEROLO'
-    r'(\w+)\s+'
-    r'(.+?)\s+'
-    r'\d+\s+[A-Z]/[A-Z]'
+    r'^(\d{4}-\d{2}-\d{2})\s+'   # data do ato YYYY-MM-DD
+    r'.+?\s+'                      # nome do grupo (qualquer texto)
+    r'(\d+)\s+'                    # total do grupo
+    r'([A-Z]+/\d+)\s+'            # processo (CCC/245230, HCIS/123, etc.)
+    r'(.+?)'                       # nome do doente (lazy)
+    r'[A-Z]{4,}'                   # separador especialidade
+    r'(\w+)\s+'                    # código do ato
+    r'(.+?)\s+'                    # descrição do procedimento
+    r'\d+\s+[A-Z]/[A-Z]'          # qtd e fact — âncora final
 )
 
-# Linha SEM data (pertence ao grupo da linha anterior com data)
+# Linha SEM data
 RE_SEM_DATA = re.compile(
-    r'^(CCC/\d+)\s+'
-    r'(.+?)'
-    r'GASTROENTEROLO'
-    r'(\w+)\s+'
-    r'(.+?)\s+'
-    r'\d+\s+[A-Z]/[A-Z]'
+    r'^([A-Z]+/\d+)\s+'   # processo (qualquer prefixo maiúsculas + barra + dígitos)
+    r'(.+?)'               # nome
+    r'[A-Z]{4,}'           # separador especialidade
+    r'(\w+)\s+'            # código
+    r'(.+?)\s+'            # procedimento
+    r'\d+\s+[A-Z]/[A-Z]'  # âncora final
 )
 
 
@@ -85,17 +86,17 @@ def extrair_registos_pagina(texto: str, ultima_data: str):
             ultima_data = m.group(1)
             registos.append({
                 "data": ultima_data,
-                "processo": m.group(2),
-                "nome": m.group(3).strip(),
-                "codigo": m.group(4),
-                "procedimento": m.group(5).strip()
+                "processo": m.group(3),
+                "nome": m.group(4).strip(),
+                "codigo": m.group(5),
+                "procedimento": m.group(6).strip()
             })
             continue
 
         m2 = RE_SEM_DATA.match(linha)
         if m2:
             registos.append({
-                "data": ultima_data,      # herda data do ato do grupo
+                "data": ultima_data,
                 "processo": m2.group(1),
                 "nome": m2.group(2).strip(),
                 "codigo": m2.group(3),
@@ -171,7 +172,9 @@ if uploads and st.button("🚀 Iniciar Processamento"):
 
     for idx_pdf, pdf_file in enumerate(uploads):
         novas_linhas = []
-        ultima_data = ""  # reset por PDF
+        ultima_data = ""
+        total_extraido = 0
+        total_duplicado = 0
 
         with pdfplumber.open(pdf_file) as pdf:
             total_pags = len(pdf.pages)
@@ -187,15 +190,15 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                     continue
 
                 registos, ultima_data = extrair_registos_pagina(texto, ultima_data)
+                total_extraido += len(registos)
 
                 for r in registos:
                     data_fmt = formatar_data_pt(r["data"])
                     nome = r["nome"].upper()
                     codigo = r["codigo"]
                     proc = r["procedimento"]
-                    processo = r["processo"]
+                    processo = re.sub(r'\D', '', r["processo"])  # só dígitos
 
-                    processo = re.sub(r'\D', '', processo)  # só dígitos: "CCC/245230" → "245230"
                     chave = f"{data_fmt}_{processo}"
                     if chave not in chaves_existentes:
                         novas_linhas.append([
@@ -203,8 +206,23 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                             data_hoje, pdf_file.name
                         ])
                         chaves_existentes.add(chave)
+                    else:
+                        total_duplicado += 1
 
-        # Gravação em lotes de 500 linhas após cada PDF
+        # Diagnóstico sempre visível
+        st.write(
+            f"**{pdf_file.name}** — extraídos: {total_extraido} | "
+            f"novos: {len(novas_linhas)} | duplicados ignorados: {total_duplicado}"
+        )
+
+        # Se extraiu zero, mostra as primeiras linhas brutas para diagnóstico
+        if total_extraido == 0:
+            with pdfplumber.open(pdf_file) as pdf:
+                txt_p1 = pdf.pages[0].extract_text() or ""
+            st.warning("⚠️ Nenhum registo encontrado. Primeiras linhas do PDF:")
+            st.code(txt_p1[:1500])
+
+        # Gravação em lotes de 500
         if novas_linhas:
             for i in range(0, len(novas_linhas), 500):
                 lote = novas_linhas[i:i+500]
