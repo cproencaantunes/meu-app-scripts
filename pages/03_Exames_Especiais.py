@@ -195,6 +195,7 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                     proc = r["procedimento"]
                     processo = r["processo"]
 
+                    processo = re.sub(r'\D', '', processo)  # só dígitos: "CCC/245230" → "245230"
                     chave = f"{data_fmt}_{processo}"
                     if chave not in chaves_existentes:
                         novas_linhas.append([
