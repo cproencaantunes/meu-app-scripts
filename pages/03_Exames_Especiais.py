@@ -80,12 +80,13 @@ def extrair_registos_pagina(texto: str, ultima_data: str):
         m = RE_COM_DATA.match(linha)
         if m:
             ultima_data = m.group(1)
+            # grupos: 1=data, 2=processo, 3=nome, 4=codigo, 5=procedimento
             registos.append({
                 "data": ultima_data,
-                "processo": m.group(3),
-                "nome": m.group(4).strip(),
-                "codigo": m.group(5),
-                "procedimento": m.group(6).strip()
+                "processo": m.group(2),
+                "nome": m.group(3).strip(),
+                "codigo": m.group(4),
+                "procedimento": m.group(5).strip()
             })
             continue
 
