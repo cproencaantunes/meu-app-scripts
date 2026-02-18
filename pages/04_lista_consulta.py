@@ -129,7 +129,7 @@ def get_gspread_client():
 
 def append_to_sheets(records, sheet_url, pdf_name):
     """
-    Abre (ou cria) a aba 'Consultas', encontra a primeira linha livre
+    Abre (ou cria) a aba 'Consulta', encontra a primeira linha livre
     na coluna C e acrescenta os registos sem apagar dados existentes.
     Colunas: C=Data  D=Processo  E=Nome  F=Origem PDF
     """
@@ -137,9 +137,9 @@ def append_to_sheets(records, sheet_url, pdf_name):
     sh = gc.open_by_url(sheet_url)
 
     try:
-        ws = sh.worksheet("Consultas")
+        ws = sh.worksheet("Consulta")
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title="Consultas", rows=2000, cols=20)
+        ws = sh.add_worksheet(title="Consulta", rows=2000, cols=20)
         ws.update(
             range_name="C1:F1",
             values=[["Data", "Nº Processo", "Nome", "Origem PDF"]]
@@ -171,7 +171,7 @@ def append_to_sheets(records, sheet_url, pdf_name):
 st.title("🗓️ Extração de Consultas — GHCE4025R")
 st.markdown(
     "Carregue o PDF de **Actos Médicos** (consultas). "
-    "Os dados são extraídos e escritos automaticamente na aba **Consultas** "
+    "Os dados são extraídos e escritos automaticamente na aba **Consulta** "
     "da planilha configurada, a partir da primeira linha livre na coluna **C**."
 )
 
@@ -237,7 +237,7 @@ if uploaded_file:
             try:
                 first_row, n = append_to_sheets(records, sheet_url, uploaded_file.name)
                 st.success(
-                    f"✅ **{n} registos** escritos na aba **Consultas** "
+                    f"✅ **{n} registos** escritos na aba **Consulta** "
                     f"a partir da linha **{first_row}** (coluna C)."
                 )
                 st.markdown(f"[🔗 Abrir Planilha]({sheet_url})")
