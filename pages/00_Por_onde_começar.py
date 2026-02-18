@@ -9,11 +9,13 @@ st.markdown("---")
 # --- SECÇÃO 1: PREPARAR A PLANILHA ---
 st.header("1️⃣ Preparar a sua Planilha")
 
-# NOVO: Instrução de Obtenção de Listas (Acima das colunas da planilha)
+# NOVO: Instrução de Obtenção de Listas
 st.markdown("### 📋 Obtenção de Listas Pessoais")
 st.write("Antes de começar, certifique-se de que sabe extrair as listagens corretas do sistema hospitalar.")
 st.link_button("Ver Instruções de Obtenção de Listas 📄", "https://drive.google.com/file/d/1admteRooOe45rFAppOeU9kOrffbg0Mbq/view?usp=drive_link")
-st.markdown("<br>", unsafe_allow_stdio=True) # Espaçamento visual
+
+# Correção técnica para evitar o erro de Syntax/Type anterior
+st.markdown("<br>", unsafe_allow_html=True) 
 
 col_a, col_b = st.columns(2)
 
