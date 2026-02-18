@@ -58,7 +58,7 @@ RE_LINHA = re.compile(
     r'(\d+)'                       # processo (só dígitos, colado ao nome)
     r'(.+?)\s+'                    # nome + serviço + entidade + acto (tudo junto)
     r'\d+\s+'                      # quantidade
-    r'([\d,]+\.\d{2})$'           # valor (ex: 50.00 ou 1,125.20)
+    r'(-?[\d,]+\.\d{2})$'           # valor (ex: 50.00 ou 1,125.20)
 )
 
 # Cabeçalhos de secção de grupo
