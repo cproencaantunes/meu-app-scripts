@@ -8,6 +8,13 @@ st.markdown("---")
 
 # --- SECÇÃO 1: PREPARAR A PLANILHA ---
 st.header("1️⃣ Preparar a sua Planilha")
+
+# NOVO: Instrução de Obtenção de Listas (Acima das colunas da planilha)
+st.markdown("### 📋 Obtenção de Listas Pessoais")
+st.write("Antes de começar, certifique-se de que sabe extrair as listagens corretas do sistema hospitalar.")
+st.link_button("Ver Instruções de Obtenção de Listas 📄", "https://drive.google.com/file/d/1admteRooOe45rFAppOeU9kOrffbg0Mbq/view?usp=drive_link")
+st.markdown("<br>", unsafe_allow_stdio=True) # Espaçamento visual
+
 col_a, col_b = st.columns(2)
 
 with col_a:
@@ -15,7 +22,6 @@ with col_a:
     st.write("Clique no botão abaixo para abrir o modelo oficial e faça uma cópia para a sua conta Google Drive pessoal.")
     st.link_button("Abrir Template do Excel ↗️", "https://docs.google.com/spreadsheets/d/1oyWViB-jafKCGKLTMCDcY5xShMNgtWVUjTqmZfzWQMM/edit?gid=0#gid=0")
     
-    # --- NOVA INFORMAÇÃO SOLICITADA ---
     st.warning("""
     **💡 Já tem uma planilha própria?** Se preferir não usar o template, deve garantir que as suas abas têm exatamente estes nomes:  
     `pagos`, `ExamesEsp`, `Consulta`, `Anestesiados`.  
