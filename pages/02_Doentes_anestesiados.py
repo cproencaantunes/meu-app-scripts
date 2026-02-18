@@ -160,7 +160,7 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def append_to_sheets(records, sheet_url):
+def append_to_sheets(records, sheet_url, pdf_name=""):
     """
     Abre a aba 'Cirurgias', encontra a primeira linha livre na coluna C
     e acrescenta os registos a partir daí sem apagar dados existentes.
@@ -177,10 +177,10 @@ def append_to_sheets(records, sheet_url):
         ws = sh.add_worksheet(title="Anestesiados", rows=2000, cols=20)
         # Aba nova: escrever cabeçalhos na linha 1 a partir de C
         ws.update(
-            range_name="C1:G1",
-            values=[["Data", "Nº Processo", "Doente", "Procedimentos", "Urgência"]]
+            range_name="C1:H1",
+            values=[["Data", "Nº Processo", "Doente", "Procedimentos", "Urgência", "Origem"]]
         )
-        ws.format("C1:G1", {
+        ws.format("C1:H1", {
             "textFormat": {"bold": True},
             "backgroundColor": {"red": 0.122, "green": 0.220, "blue": 0.392},
         })
@@ -189,15 +189,15 @@ def append_to_sheets(records, sheet_url):
     col_c_values = ws.col_values(3)       # valores actuais da coluna C
     first_free_row = len(col_c_values) + 1
 
-    # Construir linhas: apenas colunas C a G
+    # Construir linhas: colunas C a H (dados + nome do PDF de origem)
     rows_to_write = [
-        [rec["data"], rec["processo"], rec["doente"], rec["procedimentos"], rec["urgencia"]]
+        [rec["data"], rec["processo"], rec["doente"], rec["procedimentos"], rec["urgencia"], pdf_name]
         for rec in records
     ]
 
     last_row = first_free_row + len(rows_to_write) - 1
     ws.update(
-        range_name=f"C{first_free_row}:G{last_row}",
+        range_name=f"C{first_free_row}:H{last_row}",
         values=rows_to_write
     )
 
@@ -286,7 +286,7 @@ if uploaded_file:
         st.caption(f"🔗 Planilha: `{sheet_url}`")
         with st.spinner("📤 A escrever na planilha..."):
             try:
-                first_row, n = append_to_sheets(records, sheet_url)
+                first_row, n = append_to_sheets(records, sheet_url, pdf_name=uploaded_file.name)
                 st.success(
                     f"✅ **{n} registos** escritos na aba **Anestesiados** "
                     f"a partir da linha **{first_row}** (coluna C)."
