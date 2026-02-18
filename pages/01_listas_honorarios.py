@@ -190,7 +190,7 @@ try:
     sheet_id = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_url).group(1)
     sh = gc.open_by_key(sheet_id)
 
-    NOME_FOLHA = 'Honorários'
+    NOME_FOLHA = 'pagos'
     CABECALHO  = [["Data", "Processo", "Nome do Doente", "Valor (€)",
                    "Procedimento", "Entidade", "Gravado Em", "Origem PDF"]]
     try:
