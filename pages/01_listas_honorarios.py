@@ -197,7 +197,7 @@ try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except Exception:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="10000", cols="15")
-        worksheet.update(range_name="C1", values=CABECALHO)
+        worksheet.update(range_name="B1", values=CABECALHO)
 
 except Exception as e:
     st.error(f"❌ Erro de ligação ao Google Sheets: {e}")
@@ -256,7 +256,7 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                 worksheet.append_rows(
                     lote,
                     value_input_option="USER_ENTERED",
-                    table_range="C1"
+                    table_range="B1"
                 )
                 if len(todas_linhas) > 500:
                     time.sleep(1)
