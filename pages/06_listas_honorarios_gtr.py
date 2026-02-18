@@ -68,7 +68,7 @@ RE_GRUPO = re.compile(
 
 # Linhas de cabeçalho/rodapé a ignorar
 RE_IGNORAR = re.compile(
-    r'Hospital |Mapa de Honor|PS_PA_009|Utilizador:|Pág\.\s*(por|:)?\s*\d|'
+    r'^Hospital |Mapa de Honor|PS_PA_009|Utilizador:|Pág\.\s*(por|:)?\s*\d|'
     r'Data:\s*\d{4}|Hora:\s*\d|Ano:\s*\d|Prestador de Serviços|'
     r'Código fornecedor|1M - Processamento|Datas (Activ|Factur)|'
     r'Valores do Período|^Data\s+Doente|Total (do Período|Geral|Valor)'
@@ -141,7 +141,7 @@ try:
     except Exception:
         worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="10000", cols="10")
         worksheet.update(
-            range_name="A1",
+            range_name="C1",
             values=[["Data", "Processo", "Nome do Doente", "Serviço", "Grupo", "Valor (€)", "Gravado Em", "Origem PDF"]]
         )
 except Exception as e:
@@ -202,7 +202,7 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                 worksheet.append_rows(
                     lote,
                     value_input_option="USER_ENTERED",
-                    table_range="A1"
+                    table_range="C1"
                 )
                 if len(todas_linhas) > 500:
                     time.sleep(1)
@@ -217,4 +217,3 @@ if uploads and st.button("🚀 Iniciar Processamento"):
         progresso.progress((idx_pdf + 1) / len(uploads))
 
     status_msg.success("✨ Processamento concluído!")
-    st.balloons()
