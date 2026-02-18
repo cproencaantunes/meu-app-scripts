@@ -250,14 +250,20 @@ if uploads and st.button("🚀 Iniciar Processamento"):
         st.write(f"**{pdf_file.name}** — {len(todas_linhas)} linhas extraídas")
 
         if todas_linhas:
-            # Gravação em lotes de 500 a partir da primeira linha livre na coluna C
+            # Determina a primeira linha vazia na coluna B (garante que nunca escreve na coluna A)
+            col_b = worksheet.col_values(2)  # coluna B (índice 2)
+            primeira_linha_livre = len(col_b) + 1
+
+            # Gravação em lotes de 500 com range explícito a partir da coluna B
             for i in range(0, len(todas_linhas), 500):
                 lote = todas_linhas[i:i+500]
-                worksheet.append_rows(
-                    lote,
-                    value_input_option="USER_ENTERED",
-                    table_range="B1"
+                range_destino = f"B{primeira_linha_livre}"
+                worksheet.update(
+                    range_name=range_destino,
+                    values=lote,
+                    value_input_option="USER_ENTERED"
                 )
+                primeira_linha_livre += len(lote)
                 if len(todas_linhas) > 500:
                     time.sleep(1)
             st.toast(f"✅ {len(todas_linhas)} linhas gravadas de {pdf_file.name}")
