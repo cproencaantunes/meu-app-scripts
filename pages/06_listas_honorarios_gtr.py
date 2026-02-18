@@ -23,15 +23,13 @@ if not sheet_url:
 #
 # Pág. 1: sumário por grupo (ignorada)
 # Págs. 2+: linhas de detalhe, uma por ato:
-#   "DD-MM-YY <processo><nome> <Serviço> <cod_entidade> <entidade...> <cod_acto><acto...> [%] [NrK] <qtd> <valor>"
+#   "DD-MM-YY <processo><nome> <Serviço> <cod_ent> <entidade> <cod_acto><procedimento> [%] [NrK] <qtd> <valor>"
 #
-# Os nomes dos doentes ficam sempre antes do nome do serviço.
-# O valor é sempre o último campo (formato 9.99 ou 9,999.99).
-# O grupo (Anestesia, Cirurgias, Consultas, etc.) aparece como linha de secção.
+# Colunas extraídas (por ordem):
+#   Data | Processo | Nome | Valor | Procedimento | Entidade | Data Extração | PDF Origem
 # ---------------------------------------------------------------------------
 
-# Serviços conhecidos — ordenados do mais longo para o mais curto para evitar
-# matches parciais (ex: "Cirurgia Geral" antes de "Cirurgia")
+# Serviços conhecidos — do mais longo para o mais curto (evita matches parciais)
 _SERVICOS = [
     'Bloco Operatorio Tejo',
     'Cir. Plástica E Reconstru',
@@ -39,34 +37,44 @@ _SERVICOS = [
     'Otorrinolaringologia',
     'Neuro-Cirurgia',
     'Cirurgia Vascular',
+    'Cirurgia Torácica',
     'Cirurgia Geral',
     'Gastroenterologia',
     'Anestesiologia',
     'Oftalmologia',
     'Ortopedia',
+    'Angiografia',
+    'Urologia',
+    'CPRE',
 ]
 _SERVICOS.sort(key=len, reverse=True)
 
-# Separador nome → serviço: serviço seguido imediatamente de dígitos (código da entidade)
+# Mapa para nome canónico independente de maiúsculas no PDF
+_SERVICO_CANON = {s.lower(): s for s in _SERVICOS}
+
+# Separador nome → serviço: case-insensitive, serviço seguido de dígito (código entidade)
 RE_SERVICO = re.compile(
-    r'\s*(' + '|'.join(re.escape(s) for s in _SERVICOS) + r')(?=\s*\d)'
+    r'\s*(' + '|'.join(re.escape(s) for s in _SERVICOS) + r')(?=\s*\d)',
+    re.IGNORECASE
 )
 
-# Linha de dados: começa com data DD-MM-YY, processo colado ao nome, termina em qtd + valor
+# Linha de dados principal
 RE_LINHA = re.compile(
     r'^(\d{2}-\d{2}-\d{2})\s+'   # data DD-MM-YY
     r'(\d+)'                       # processo (só dígitos, colado ao nome)
-    r'(.+?)\s+'                    # nome + serviço + entidade + acto (tudo junto)
-    r'-?\d+\s+'                      # quantidade (pode ser negativa em extornos)
-    r'(-?[\d,]+\.\d{2})$'           # valor (ex: 50.00 ou 1,125.20)
+    r'(.+?)\s+'                    # nome + serviço + entidade + procedimento
+    r'-?\d+\s+'                    # quantidade (pode ser negativa em extornos)
+    r'(-?[\d,]+\.\d{2})$'         # valor (ex: 50.00 ou -121.41 ou 1,125.20)
 )
 
 # Cabeçalhos de secção de grupo
 RE_GRUPO = re.compile(
-    r'^(Anestesia|Cirurgias Oftalmologia|Cirurgias|Consultas|Endoscopia.*)$'
+    r'^(Anestesia|Angiografia[^,]|CPRE|Cirurgias Oftalmologia|Cirurgias|'
+    r'Consultas|Exames Bloco)$'
 )
 
 # Linhas de cabeçalho/rodapé a ignorar
+# "Hospital" ancorado ao início para não apanhar entidades como "Hospital Garcia De Orta"
 RE_IGNORAR = re.compile(
     r'^Hospital |Mapa de Honor|PS_PA_009|Utilizador:|Pág\.\s*(por|:)?\s*\d|'
     r'Data:\s*\d{4}|Hora:\s*\d|Ano:\s*\d|Prestador de Serviços|'
@@ -75,9 +83,50 @@ RE_IGNORAR = re.compile(
 )
 
 
+def extrair_entidade_proc(resto: str) -> tuple[str, str]:
+    """
+    Dado o texto após o serviço, extrai entidade pagadora e início do procedimento.
+
+    Formato do resto: " <cod_ent> <entidade...> <cod_acto><procedimento> [% NrK]"
+
+    O cod_acto é sempre 5+ dígitos colados ao início do procedimento.
+    Alguns códigos têm sufixo de letras maiúsculas (PT, T) que fazem parte do código.
+    """
+    resto = resto.strip()
+    partes = resto.split(None, 1)
+    if len(partes) < 2:
+        return "", ""
+
+    sem_cod_ent = partes[1]  # remove o código numérico da entidade (1ª palavra)
+
+    # Localiza cod_acto: 5+ dígitos colados ao procedimento
+    m = re.search(r'\d{5,}', sem_cod_ent)
+    if not m:
+        return sem_cod_ent.strip(), ""
+
+    entidade   = sem_cod_ent[:m.start()].strip()
+    apos_digitos = sem_cod_ent[m.end():]
+
+    # Elimina sufixo de código (PT ou T) quando colado ao procedimento
+    sufixo = re.match(r'^(PT|T)(?=[A-Za-zÀ-ÿ])', apos_digitos)
+    if sufixo:
+        apos_digitos = apos_digitos[sufixo.end():]
+
+    proc_raw = apos_digitos.strip()
+
+    # Remove cauda: "% valor NrK" — ex: "90.00 -57" ou "90.00 66" ou só "60.00"
+    proc = re.sub(r'\s+\d+\.\d{2}\s+-?\d+\s*$', '', proc_raw).strip()
+    proc = re.sub(r'\s+\d+\.\d{2}\s*$', '', proc).strip()
+    # Remove " -" final de linhas truncadas pelo PDF
+    proc = re.sub(r'\s+-\s*$', '', proc).strip()
+
+    return entidade, proc
+
+
 def parsear_pagina(texto: str, grupo_atual: str) -> tuple[list, str]:
     """Parseia uma página e devolve (lista_registos, grupo_atual)."""
     registos = []
+
     for linha in texto.split('\n'):
         linha = linha.strip()
         if not linha or RE_IGNORAR.search(linha):
@@ -94,27 +143,33 @@ def parsear_pagina(texto: str, grupo_atual: str) -> tuple[list, str]:
         if not m:
             continue
 
-        data_raw = m.group(1)   # DD-MM-YY
-        processo = m.group(2)   # só dígitos
-        meio = m.group(3).strip()
-        valor = m.group(4).replace(',', '').replace('.', ',')
+        data_raw  = m.group(1)   # DD-MM-YY
+        processo  = m.group(2)   # só dígitos
+        meio      = m.group(3).strip()
+        valor_raw = m.group(4)
 
-        # Separa nome do serviço
+        # Separa nome do serviço (case-insensitive, cobre "UROLOGIA" e "Urologia")
         ms = RE_SERVICO.search(meio)
-        nome = meio[:ms.start()].strip() if ms else meio.strip()
-        servico = ms.group(1) if ms else ""
+        nome  = meio[:ms.start()].strip() if ms else meio.strip()
+        resto = meio[ms.end():]           if ms else ""
 
-        # Converte DD-MM-YY → DD-MM-YYYY
+        # Extrai entidade e procedimento
+        entidade, procedimento = extrair_entidade_proc(resto)
+
+        # Formata data: DD-MM-YY → DD-MM-YYYY (com zero-padding no dia e mês)
         p = data_raw.split('-')
         data_fmt = f"{p[0].zfill(2)}-{p[1].zfill(2)}-20{p[2]}"
 
+        # Formata valor: "1,125.20" → "1125,20" | "-50.00" → "-50,00"
+        valor = valor_raw.replace(',', '').replace('.', ',')
+
         registos.append({
-            "data": data_fmt,
-            "processo": processo,
-            "nome": nome.upper(),
-            "servico": servico,
-            "grupo": grupo_atual,
-            "valor": valor,
+            "data":         data_fmt,
+            "processo":     processo,
+            "nome":         nome.upper(),
+            "valor":        valor,
+            "procedimento": procedimento,
+            "entidade":     entidade,
         })
 
     return registos, grupo_atual
@@ -136,14 +191,14 @@ try:
     sh = gc.open_by_key(sheet_id)
 
     NOME_FOLHA = 'Honorários'
+    CABECALHO  = [["Data", "Processo", "Nome do Doente", "Valor (€)",
+                   "Procedimento", "Entidade", "Gravado Em", "Origem PDF"]]
     try:
         worksheet = sh.worksheet(NOME_FOLHA)
     except Exception:
-        worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="10000", cols="10")
-        worksheet.update(
-            range_name="C1",
-            values=[["Data", "Processo", "Nome do Doente", "Serviço", "Grupo", "Valor (€)", "Gravado Em", "Origem PDF"]]
-        )
+        worksheet = sh.add_worksheet(title=NOME_FOLHA, rows="10000", cols="15")
+        worksheet.update(range_name="C1", values=CABECALHO)
+
 except Exception as e:
     st.error(f"❌ Erro de ligação ao Google Sheets: {e}")
     st.stop()
@@ -154,7 +209,7 @@ except Exception as e:
 st.title("💶 Extração de Honorários")
 st.info(
     "Extrai todas as linhas dos PDFs **Mapa de Honorários - Detalhe** para o Google Sheets.  \n"
-    "**Sem deduplicação** — todas as linhas são gravadas, incluindo repetidas."
+    "Sem deduplicação — todas as linhas são gravadas, incluindo extornos (valores negativos)."
 )
 
 uploads = st.file_uploader(
@@ -164,11 +219,11 @@ uploads = st.file_uploader(
 if uploads and st.button("🚀 Iniciar Processamento"):
     data_hoje = datetime.now().strftime("%d-%m-%Y %H:%M")
     status_msg = st.empty()
-    progresso = st.progress(0)
+    progresso  = st.progress(0)
 
     for idx_pdf, pdf_file in enumerate(uploads):
         todas_linhas = []
-        grupo_atual = ""
+        grupo_atual  = ""
 
         with pdfplumber.open(pdf_file) as pdf:
             total_pags = len(pdf.pages)
@@ -187,16 +242,15 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                 for r in registos:
                     todas_linhas.append([
                         r["data"], r["processo"], r["nome"],
-                        r["servico"], r["grupo"], r["valor"],
+                        r["valor"], r["procedimento"], r["entidade"],
                         data_hoje, pdf_file.name
                     ])
 
-        # Diagnóstico
+        # Diagnóstico por PDF
         st.write(f"**{pdf_file.name}** — {len(todas_linhas)} linhas extraídas")
 
         if todas_linhas:
-            # Pág. 1 é só sumário — não tem linhas de dados, ok
-            # Gravação em lotes de 500
+            # Gravação em lotes de 500 a partir da primeira linha livre na coluna C
             for i in range(0, len(todas_linhas), 500):
                 lote = todas_linhas[i:i+500]
                 worksheet.append_rows(
@@ -208,7 +262,7 @@ if uploads and st.button("🚀 Iniciar Processamento"):
                     time.sleep(1)
             st.toast(f"✅ {len(todas_linhas)} linhas gravadas de {pdf_file.name}")
         else:
-            # Mostra diagnóstico se nada extraído
+            # Diagnóstico se nada extraído
             with pdfplumber.open(pdf_file) as pdf:
                 txt_p2 = pdf.pages[1].extract_text() if len(pdf.pages) > 1 else ""
             st.warning("⚠️ Nenhum registo encontrado. Primeiras linhas da pág. 2:")
