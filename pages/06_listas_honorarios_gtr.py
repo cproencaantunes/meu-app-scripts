@@ -97,7 +97,7 @@ def parsear_pagina(texto: str, grupo_atual: str) -> tuple[list, str]:
         data_raw = m.group(1)   # DD-MM-YY
         processo = m.group(2)   # só dígitos
         meio = m.group(3).strip()
-        valor = m.group(4).replace(',', '')  # remove separador de milhar
+        valor = m.group(4).replace(',', '').replace('.', ',')
 
         # Separa nome do serviço
         ms = RE_SERVICO.search(meio)
@@ -106,7 +106,7 @@ def parsear_pagina(texto: str, grupo_atual: str) -> tuple[list, str]:
 
         # Converte DD-MM-YY → DD-MM-YYYY
         p = data_raw.split('-')
-        data_fmt = f"{p[0]}-{p[1]}-20{p[2]}"
+        data_fmt = f"{p[0].zfill(2)}-{p[1].zfill(2)}-20{p[2]}"
 
         registos.append({
             "data": data_fmt,
