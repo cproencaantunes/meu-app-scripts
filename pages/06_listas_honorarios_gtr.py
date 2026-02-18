@@ -57,7 +57,7 @@ RE_LINHA = re.compile(
     r'^(\d{2}-\d{2}-\d{2})\s+'   # data DD-MM-YY
     r'(\d+)'                       # processo (só dígitos, colado ao nome)
     r'(.+?)\s+'                    # nome + serviço + entidade + acto (tudo junto)
-    r'\d+\s+'                      # quantidade
+    r'-?\d+\s+'                      # quantidade (pode ser negativa em extornos)
     r'(-?[\d,]+\.\d{2})$'           # valor (ex: 50.00 ou 1,125.20)
 )
 
