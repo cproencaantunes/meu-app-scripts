@@ -13,25 +13,22 @@ if "authenticated" not in st.session_state or not st.session_state["authenticate
     st.stop()
 
 # ─── Constantes de layout e RegEx ─────────────────────────────────────────────
-NAME_X_MIN  = 150   # Onde o nome geralmente começa
-# Expandimos o limite para não cortar nomes longos em novos layouts
+NAME_X_MIN  = 150   
 NAME_X_MAX  = 400   
 
-# Regex flexível para Data e Hora (suporta 2023-04-10 13:45 ou 2023-04-1013:45)
+# Regex para Data e Hora
 DATE_TIME_RE = re.compile(r'(\d{4}-\d{2}-\d{2})\s*(\d{2}:\d{2})?')
 
-# Regex atualizada para CCC, CCO ou HCIS
+# Regex para capturar o prefixo no grupo 1 e os NÚMEROS no grupo 2
 PROC_RE = re.compile(r'(CCC|CCO|HCIS)/(\d+)')
 
-# Filtro para ignorar lixo e termos técnicos conhecidos
+# Filtro para ignorar lixo
 JUNK_RE = re.compile(r'\d{5,}|^[A-Z0-9]{6,}$|Anestesiologi|Consultas|Consulta De')
 
 # ─── Parser PDF ───────────────────────────────────────────────────────────────
 
 def cluster_rows(words, gap=5):
-    """Agrupa palavras em linhas por proximidade vertical."""
-    if not words:
-        return []
+    if not words: return []
     sw = sorted(words, key=lambda w: w['top'])
     clusters = [[sw[0]]]
     for w in sw[1:]:
@@ -42,12 +39,10 @@ def cluster_rows(words, gap=5):
     return clusters
 
 def limpar_nome(parts):
-    """Limpa e formata a lista de partes do nome."""
     limpos = [p for p in parts if not JUNK_RE.search(p)]
     return ' '.join(limpos).strip()
 
 def parse_consultas_pdf(pdf_bytes):
-    """Extrai registos de consulta adaptado para novos prefixos (CCC/CCO)."""
     records = []
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -64,40 +59,34 @@ def parse_consultas_pdf(pdf_bytes):
                 proc_val = None
                 name_parts = []
 
-                # Tenta encontrar data e processo na linha atual
                 date_match = DATE_TIME_RE.search(row_text)
                 proc_match = PROC_RE.search(row_text)
 
                 if date_match:
                     date_val = date_match.group(1)
+                
                 if proc_match:
-                    proc_val = f"{proc_match.group(1)}/{proc_match.group(2)}"
+                    # ALTERAÇÃO: Captura apenas o grupo(2), que são os números
+                    proc_val = proc_match.group(2)
 
-                # Se achou os dados básicos, procura o nome
                 if date_val and proc_val:
-                    # O nome costuma estar na mesma linha ou logo abaixo
                     for w in sorted(row, key=lambda x: x['x0']):
                         if NAME_X_MIN <= w['x0'] <= NAME_X_MAX:
                             if re.match(r'^[A-ZÁÉÍÓÚÀÃÕÂÊÔÇÜ]', w['text']):
                                 name_parts.append(w['text'])
 
-                    # Capturar continuação do nome nas linhas seguintes
                     j = i + 1
                     while j < len(clusters):
                         next_row = clusters[j]
                         next_text = " ".join([w['text'] for w in next_row])
-                        
-                        # Para se encontrar outra data ou o marcador de nascimento
                         if DATE_TIME_RE.search(next_text) or "nascimento" in next_text.lower():
                             break
-                        
                         for w in sorted(next_row, key=lambda x: x['x0']):
                             if NAME_X_MIN <= w['x0'] <= NAME_X_MAX:
                                 if re.match(r'^[A-ZÁÉÍÓÚÀÃÕÂÊÔÇÜ]', w['text']):
                                     name_parts.append(w['text'])
                         j += 1
 
-                    # Formatar data para DD-MM-YYYY
                     pts = date_val.split('-')
                     date_fmt = f"{pts[2]}-{pts[1]}-{pts[0]}"
 
@@ -109,7 +98,6 @@ def parse_consultas_pdf(pdf_bytes):
                     i = j
                 else:
                     i += 1
-
     return records
 
 # ─── Google Sheets ────────────────────────────────────────────────────────────
@@ -142,7 +130,7 @@ def append_to_sheets(records, sheet_url, pdf_name):
 # ─── Interface Streamlit ──────────────────────────────────────────────────────
 
 st.title("🗓️ Extração de Consultas — GHCE4025R")
-st.info("Suporta agora prefixos CCC, CCO e HCIS.")
+st.markdown("Extração de dados sem prefixos (apenas números de processo).")
 
 sheet_url = st.session_state.get("sheet_url", "").strip()
 
@@ -158,15 +146,15 @@ if uploaded_file:
             st.stop()
 
     if not records:
-        st.error("Nenhum dado extraído. Verifique se o PDF segue o padrão esperado.")
+        st.error("Nenhum dado extraído. Verifique o PDF.")
     else:
         df = pd.DataFrame(records)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
         if sheet_url:
-            if st.button("📤 Confirmar e Enviar para Google Sheets"):
+            if st.button("📤 Enviar para Google Sheets"):
                 with st.spinner("A enviar..."):
                     row, count = append_to_sheets(records, sheet_url, uploaded_file.name)
-                    st.success(f"Enviados {count} registos para a linha {row}!")
+                    st.success(f"Sucesso! {count} registos enviados.")
         else:
-            st.warning("Configure o URL da planilha na barra lateral para exportar.")
+            st.warning("🔗 Por favor, configure o link da planilha.")
