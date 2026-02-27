@@ -430,6 +430,5 @@ if res:
                 st.session_state.pdf_bytes_cache = None
                 st.session_state.registos_em_falta = None
                 st.session_state.investigacao_feita = False
-                st.balloons()
             except Exception as e:
                 st.error(f"❌ Erro ao gravar na planilha: {e}")
