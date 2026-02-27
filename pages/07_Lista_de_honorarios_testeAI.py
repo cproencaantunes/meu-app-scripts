@@ -51,40 +51,118 @@ def extrair_dados_ia(texto_pagina, model):
     except:
         return []
 
-def contar_registos_esperados_ia(texto_completo_pdf, model):
+def reparar_json_truncado(raw):
     """
-    Usa a IA para contar quantos registos únicos (linhas de honorários)
-    deveriam existir no PDF, com base no texto bruto.
-    Retorna (contagem_esperada, detalhes_em_falta, texto_relatorio).
+    Tenta reparar JSON truncado/mal formado de várias formas.
+    Devolve o objeto Python ou None.
     """
-    prompt = """Analisa o seguinte texto extraído de um PDF de honorários CUF.
-O teu objetivo é:
-1. Contar o número TOTAL de registos de honorários presentes no texto (cada registo tem: data, ID de utente, nome e valor).
-2. Listar TODOS os registos que encontrares, no formato JSON:
-   [{"data":"DD-MM-YYYY","id":"ID","nome":"NOME","valor":0.00}]
+    # 1. Tentativa directa
+    try:
+        return json.loads(raw)
+    except:
+        pass
 
-Responde APENAS com um objeto JSON com esta estrutura exata:
-{
-  "total_esperado": <número inteiro>,
-  "todos_os_registos": [{"data":"DD-MM-YYYY","id":"ID","nome":"NOME","valor":0.00}]
-}
-"""
+    # 2. Extrai bloco entre primeira { e última }
+    try:
+        start = raw.index('{')
+        end = raw.rindex('}')
+        return json.loads(raw[start:end+1])
+    except:
+        pass
+
+    # 3. Tenta extrair só a lista de registos (ignora total_esperado)
+    try:
+        match = re.search(r'"todos_os_registos"\s*:\s*(\[.*?\])\s*[,}]', raw, re.DOTALL)
+        if match:
+            lista = json.loads(match.group(1))
+            return {"total_esperado": len(lista), "todos_os_registos": lista}
+    except:
+        pass
+
+    # 4. Extrai registos individuais com regex mesmo com JSON partido
+    try:
+        registos = []
+        for m in re.finditer(
+            r'\{\s*"data"\s*:\s*"([^"]*?)"\s*,\s*"id"\s*:\s*"([^"]*?)"\s*,\s*"nome"\s*:\s*"([^"]*?)"\s*,\s*"valor"\s*:\s*([\d.]+)',
+            raw
+        ):
+            registos.append({
+                "data": m.group(1),
+                "id": m.group(2),
+                "nome": m.group(3),
+                "valor": float(m.group(4))
+            })
+        if registos:
+            return {"total_esperado": len(registos), "todos_os_registos": registos}
+    except:
+        pass
+
+    return None
+
+
+def verificar_chunk(texto_chunk, model):
+    """Verifica um chunk de texto e devolve lista de registos encontrados."""
+    prompt = """Analisa este excerto de um PDF de honorários CUF.
+Lista TODOS os registos de honorários que encontrares (data, ID utente, nome, valor).
+Responde APENAS com uma lista JSON, sem texto adicional, sem markdown:
+[{"data":"DD-MM-YYYY","id":"ID","nome":"NOME","valor":0.00}]
+Se não houver registos, responde com: []"""
     try:
         response = model.generate_content(
-            f"{prompt}\n\nTEXTO DO PDF:\n{texto_completo_pdf}",
+            f"{prompt}\n\nTEXTO:\n{texto_chunk}",
             generation_config={"temperature": 0.0, "max_output_tokens": 8192}
         )
-        raw = response.text.strip()
-        # Extrai o JSON do objeto principal
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if not match:
-            return None, [], "IA não devolveu JSON válido na verificação."
-        data = json.loads(match.group())
-        total_esperado = int(data.get("total_esperado", 0))
-        todos_registos = data.get("todos_os_registos", [])
-        return total_esperado, todos_registos, None
-    except Exception as e:
-        return None, [], f"Erro na verificação IA: {e}"
+        raw = response.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return []
+    except:
+        return []
+
+
+def contar_registos_esperados_ia(texto_completo_pdf, model):
+    """
+    Estratégia em 2 passos:
+    1. Divide o texto em chunks manejáveis e pede à IA para listar registos de cada chunk.
+    2. Agrega tudo, deduplica por ID e devolve o total esperado.
+    """
+    CHUNK_SIZE = 12000  # caracteres por chunk — seguro para o contexto do modelo
+    chunks = []
+    texto = texto_completo_pdf.strip()
+    for i in range(0, len(texto), CHUNK_SIZE):
+        chunk = texto[i:i+CHUNK_SIZE]
+        if chunk.strip():
+            chunks.append(chunk)
+
+    todos_registos_raw = []
+    erros_chunks = 0
+
+    for chunk in chunks:
+        resultado = verificar_chunk(chunk, model)
+        if isinstance(resultado, list):
+            todos_registos_raw.extend(resultado)
+        else:
+            erros_chunks += 1
+
+    if not todos_registos_raw and erros_chunks == len(chunks):
+        return None, [], "IA não conseguiu processar nenhum chunk do texto."
+
+    # Deduplica por ID (mantém o primeiro encontrado)
+    vistos = set()
+    todos_registos = []
+    termos_ignorar = ["PROENÇA ANTUNES", "UTILIZADOR", "PÁGINA", "LISTAGEM", "RELATÓRIO", "FIM DA LISTAGEM"]
+    for r in todos_registos_raw:
+        id_limpo = re.sub(r'\D', '', str(r.get('id', '')))
+        nome_raw = str(r.get('nome', '')).strip().upper()
+        e_lixo = any(t in nome_raw for t in termos_ignorar)
+        if id_limpo and not e_lixo and len(nome_raw) > 3 and id_limpo not in vistos:
+            vistos.add(id_limpo)
+            r['id'] = id_limpo
+            todos_registos.append(r)
+
+    total_esperado = len(todos_registos)
+    return total_esperado, todos_registos, None
 
 def encontrar_em_falta(extraidos, todos_esperados):
     """
@@ -176,8 +254,10 @@ if arquivos_pdf and st.button("🚀 Iniciar Processamento e Verificação"):
         texto_completo_todos_pdfs += f"\n\n=== FICHEIRO: {pdf_file.name} ===\n{texto_pdf_atual}"
         progresso.progress((idx + 1) / len(arquivos_pdf))
 
-    # ----- FASE 2: VERIFICAÇÃO COM IA -----
-    status_info.info("🔍 Fase 2/2 — A verificar com IA se todos os dados foram extraídos...")
+    # ----- FASE 2: VERIFICAÇÃO COM IA (por chunks) -----
+    CHUNK_SIZE = 12000
+    n_chunks = max(1, len(texto_completo_todos_pdfs) // CHUNK_SIZE + 1)
+    status_info.info(f"🔍 Fase 2/2 — A verificar com IA ({n_chunks} blocos de texto)...")
     progresso.progress(0)
 
     total_esperado, todos_esperados, erro_verificacao = contar_registos_esperados_ia(
